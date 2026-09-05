@@ -2,10 +2,11 @@
 
 #include <functional>
 #include <vector>
+#include <memory>
 
 namespace whisperflow {
 
-// Captures PCM float samples and forwards them to a user-provided handler.
+// Captures PCM float samples from microphone via WASAPI and forwards them to a user-provided handler.
 // Composition over inheritance: the data path is a std::function, not a virtual interface.
 class AudioCapture {
 public:
@@ -16,8 +17,8 @@ public:
 
     AudioCapture(const AudioCapture&) = delete;
     AudioCapture& operator=(const AudioCapture&) = delete;
-    AudioCapture(AudioCapture&&) noexcept = default;
-    AudioCapture& operator=(AudioCapture&&) noexcept = default;
+    AudioCapture(AudioCapture&&) noexcept;
+    AudioCapture& operator=(AudioCapture&&) noexcept;
 
     void startRecording();
     void stopRecording();
@@ -25,8 +26,8 @@ public:
     [[nodiscard]] bool isRecording() const noexcept;
 
 private:
-    AudioHandler onAudioData_;
-    bool isRecording_{false};
+    class Impl;
+    std::unique_ptr<Impl> pImpl_;
 };
 
 }  // namespace whisperflow

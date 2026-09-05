@@ -23,6 +23,10 @@ target_include_directories(WhisperFlowClone
         ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
+if(MSVC)
+    target_link_libraries(WhisperFlowClone PRIVATE ole32 uuid)
+endif()
+
 # Compiler warnings and strict compliance settings
 if(MSVC)
     target_compile_options(WhisperFlowClone PRIVATE
