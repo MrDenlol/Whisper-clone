@@ -65,6 +65,13 @@ void applyKeyValue(AppConfig& config, const std::string& key, const std::string&
         config.modelSize = size;
     } else if (key == "language") {
         config.language = value;
+    } else if (key == "hotkey") {
+        const auto parsed = parseHotkey(value);
+        if (!parsed.spec) {
+            outError = parsed.error;
+            return;
+        }
+        config.hotkey = value;
     } else if (key == "threads") {
         int threads = 0;
         if (!parseInt(value, threads) || threads < 0) {
@@ -192,6 +199,18 @@ AppConfig loadConfig(int argc, char** argv) {
                 return config;
             }
             config.language = value;
+        } else if (arg == "--hotkey") {
+            if (!readNextValue(argc, argv, i, arg, value, config.error)) {
+                config.valid = false;
+                return config;
+            }
+            const auto parsed = parseHotkey(value);
+            if (!parsed.spec) {
+                config.valid = false;
+                config.error = parsed.error;
+                return config;
+            }
+            config.hotkey = value;
         } else if (arg == "--threads") {
             if (!readNextValue(argc, argv, i, arg, value, config.error)) {
                 config.valid = false;
@@ -236,6 +255,9 @@ std::string usageText() {
     out << "  --model <path>      use this ggml model file\n";
     out << "  --model-name <name> tiny | base | small (default) | medium\n";
     out << "  --language <code>   auto (default), ru, en, de, ...\n";
+    out << "  --hotkey <combo>    push-to-talk keys, default " << kDefaultHotkey << '\n';
+    out << "                      e.g. ctrl+shift+space, ctrl+alt+space, f9\n";
+    out << "                      (Win-based combos usually fail: Windows reserves them)\n";
     out << "  --threads <n>       inference threads, 0 = all logical cores\n";
     out << "  --wav <file>        transcribe a 16-bit/float WAV file instead of the microphone\n";
     out << "  --save-wav <file>   also write the captured audio to this WAV file\n";
@@ -245,7 +267,7 @@ std::string usageText() {
     out << "  --list-models       show where models are looked up and what is installed\n";
     out << "  --help              show this help\n\n";
     out << "Config file: " << configFilePath().string() << '\n';
-    out << "  model_path, model_name, language, threads, use_gpu, translate\n\n";
+    out << "  model_path, model_name, language, hotkey, threads, use_gpu, translate\n\n";
     out << "Models are not part of the repository. Default location:\n";
     out << "  " << userModelsDirectory().string() << "\\ggml-small.bin\n";
     out << "Download one with: scripts\\download-model.ps1 -Model small\n";

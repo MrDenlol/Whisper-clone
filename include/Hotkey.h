@@ -2,7 +2,10 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
+
+#include "HotkeySpec.h"
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -19,11 +22,9 @@ struct HotkeyCombination {
 };
 
 #if defined(_WIN32)
-// Push-to-talk: hold to record, release to transcribe and paste.
-// Kept as a constant on purpose - it moves into config.ini in a later step.
-// Note: Win+Space alone is the Windows layout switch; the extra Ctrl keeps this
-// combination free on a default Windows install.
-inline const HotkeyCombination kPushToTalk{MOD_CONTROL | MOD_WIN, VK_SPACE};
+// Maps the platform-independent description onto RegisterHotKey values.
+// Returns nullopt when the key name has no Windows virtual key code here.
+[[nodiscard]] std::optional<HotkeyCombination> toCombination(const HotkeySpec& spec);
 
 [[nodiscard]] std::string describeHotkey(const HotkeyCombination& combination);
 

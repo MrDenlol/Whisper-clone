@@ -46,6 +46,49 @@ std::string keyName(unsigned int key) {
 
 }  // namespace
 
+std::optional<HotkeyCombination> toCombination(const HotkeySpec& spec) {
+    unsigned int virtualKey = 0;
+    const std::string& key = spec.key;
+
+    if (key == "space") {
+        virtualKey = VK_SPACE;
+    } else if (key == "enter" || key == "return") {
+        virtualKey = VK_RETURN;
+    } else if (key == "tab") {
+        virtualKey = VK_TAB;
+    } else if (key == "esc" || key == "escape") {
+        virtualKey = VK_ESCAPE;
+    } else if (key == "backspace") {
+        virtualKey = VK_BACK;
+    } else if (isFunctionKeyName(key)) {
+        virtualKey = static_cast<unsigned int>(VK_F1) +
+                     static_cast<unsigned int>(std::stoi(key.substr(1)) - 1);
+    } else if (key.size() == 1) {
+        const char c = key[0];
+        // VK_A..VK_Z equal 'A'..'Z' and VK_0..VK_9 equal '0'..'9'.
+        virtualKey = (c >= 'a' && c <= 'z') ? static_cast<unsigned int>('A' + (c - 'a'))
+                                            : static_cast<unsigned int>(c);
+    } else {
+        return std::nullopt;
+    }
+
+    HotkeyCombination combination;
+    combination.key = virtualKey;
+    if (spec.ctrl) {
+        combination.modifiers |= MOD_CONTROL;
+    }
+    if (spec.alt) {
+        combination.modifiers |= MOD_ALT;
+    }
+    if (spec.shift) {
+        combination.modifiers |= MOD_SHIFT;
+    }
+    if (spec.win) {
+        combination.modifiers |= MOD_WIN;
+    }
+    return combination;
+}
+
 std::string describeHotkey(const HotkeyCombination& combination) {
     std::string text;
     if ((combination.modifiers & MOD_CONTROL) != 0) {

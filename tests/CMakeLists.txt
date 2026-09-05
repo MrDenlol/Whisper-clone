@@ -1,6 +1,7 @@
 add_executable(WhisperFlowTests
     test_main.cpp
     test_config.cpp
+    test_hotkey_spec.cpp
     test_model_locator.cpp
     test_session_guard.cpp
     test_speech_gate.cpp

@@ -127,6 +127,7 @@ endfunction()
 # ---------------------------------------------------------------------------
 add_library(whisperflow_core STATIC
     src/AppConfig.cpp
+    src/HotkeySpec.cpp
     src/ModelLocator.cpp
     src/SpeechGate.cpp
     src/TextInjector.cpp

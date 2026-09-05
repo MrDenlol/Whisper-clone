@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <string>
 
+#include "HotkeySpec.h"
 #include "ModelLocator.h"
 
 namespace whisperflow {
@@ -15,6 +16,7 @@ struct AppConfig {
     int threads{0};                         // 0 = all logical cores
     bool useGpu{true};                      // only used if a GPU backend is compiled in
     bool translateToEnglish{false};
+    std::string hotkey{kDefaultHotkey};     // push-to-talk, e.g. "ctrl+shift+space", "f9"
     std::filesystem::path wavInput;         // transcribe a file instead of the microphone
     std::filesystem::path saveRecording;    // dump the captured audio next to the transcript
     bool interactive{false};                // Enter-to-record console mode instead of the hotkey

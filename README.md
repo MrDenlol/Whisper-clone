@@ -68,15 +68,21 @@ Real-time:  0.37x  (inference time / audio time, lower is better)
 
 Run `WhisperFlowClone.exe` and leave it running:
 
-1. **Hold `Ctrl + Win + Space`** — recording starts immediately (the model is already warm).
+1. **Hold `Ctrl + Shift + Space`** — recording starts immediately (the model is already warm).
 2. **Speak.**
 3. **Release** — recording stops, the buffer is transcribed locally, and the text is
    inserted into whatever window has focus.
 
 Details worth knowing:
 
-- **The hotkey is a constant** for now: `kPushToTalk` in [`include/Hotkey.h`](./include/Hotkey.h)
-  (`MOD_CONTROL | MOD_WIN` + `VK_SPACE`). It moves into `config.ini` in a later step.
+- **The hotkey is configurable**: `--hotkey ctrl+alt+space`, or `hotkey = ...` in the config
+  file. Default is `ctrl+shift+space`. Combinations with the **Win** key are a bad default:
+  Windows reserves `Win+Space` for the keyboard layout switch (and plenty of other `Win+X`
+  shortcuts), so `RegisterHotKey` fails with `ERROR_HOTKEY_ALREADY_REGISTERED (1409)`. If you
+  still want one, pass it explicitly and expect that failure on a stock Windows install.
+  Parsing lives in [`include/HotkeySpec.h`](./include/HotkeySpec.h), which is plain C++ and
+  unit tested; only the mapping to virtual key codes is in
+  [`src/Hotkey.cpp`](./src/Hotkey.cpp).
 - **Release detection.** `RegisterHotKey` only reports the press, so after `WM_HOTKEY` the
   app polls `GetAsyncKeyState` every 20 ms until the combination is let go.
 - **Paste** = copy the transcript to the clipboard → `Ctrl+V` via `SendInput` → put the

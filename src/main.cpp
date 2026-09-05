@@ -188,16 +188,32 @@ public:
     bool start() {
         hotkey_.setErrorHandler([](const std::string& message) { logLine("[Hotkey] " + message); });
 
-        if (!hotkey_.registerPushToTalk(whisperflow::kPushToTalk, [this] { onHotkeyPressed(); },
+        const auto parsed = whisperflow::parseHotkey(config_.hotkey);
+        if (!parsed.spec) {
+            logLine("[Hotkey] " + parsed.error);
+            return false;
+        }
+        const auto combination = whisperflow::toCombination(*parsed.spec);
+        if (!combination) {
+            logLine("[Hotkey] cannot map '" + config_.hotkey + "' to a Windows key code");
+            return false;
+        }
+        hotkeyCombination_ = *combination;
+
+        // registerPushToTalk already reports the failure through the error handler,
+        // so only the hint is added here - logging lastError() again would print twice.
+        if (!hotkey_.registerPushToTalk(hotkeyCombination_, [this] { onHotkeyPressed(); },
                                         [this] { onHotkeyReleased(); })) {
-            logLine("[Hotkey] " + hotkey_.lastError());
+            logLine("[Hotkey] another application holds that combination. Pick a different one:");
+            logLine("[Hotkey]     WhisperFlowClone.exe --hotkey ctrl+alt+space");
+            logLine("[Hotkey]     WhisperFlowClone.exe --hotkey f9");
             return false;
         }
 
         logLine("=== WhisperFlowClone - local offline dictation ===");
         logLine("Model:      " + transcriber_.options().modelPath.string());
         logLine("Language:   " + config_.language);
-        logLine("Hotkey:     hold " + whisperflow::describeHotkey(whisperflow::kPushToTalk) +
+        logLine("Hotkey:     hold " + whisperflow::describeHotkey(hotkeyCombination_) +
                 " to talk, release to paste");
         logLine("Status:     waiting. The text is inserted into the focused window.");
         logLine("Quit:       Ctrl+C in this console.");
@@ -318,6 +334,7 @@ private:
     whisperflow::Transcriber& transcriber_;
     whisperflow::AudioCapture capture_;
     whisperflow::HotkeyManager hotkey_;
+    whisperflow::HotkeyCombination hotkeyCombination_{};  // resolved from config_.hotkey
     whisperflow::TextInjector injector_;
     whisperflow::SessionGuard guard_;
     whisperflow::SpeechGateSettings gate_;

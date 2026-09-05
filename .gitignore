@@ -45,3 +45,6 @@ models/
 .vscode/
 Thumbs.db
 Desktop.ini
+
+# Recordings made with --save-wav (test artifacts, never commit)
+*.wav
