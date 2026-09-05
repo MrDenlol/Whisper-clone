@@ -43,7 +43,9 @@ double msSince(const Clock::time_point& start) {
     return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
 }
 
-void logLine(const std::string& text) {
+// Used by the microphone/hotkey dictation path (Windows). Marked maybe_unused so
+// the non-microphone build (e.g. Linux CI, WAV-only) does not trip -Werror=unused-function.
+[[maybe_unused]] void logLine(const std::string& text) {
     std::cout << text << std::endl;
 }
 
