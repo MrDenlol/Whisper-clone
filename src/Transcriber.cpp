@@ -177,8 +177,8 @@ public:
         params.print_realtime = false;
         params.print_timestamps = false;
         params.print_special = false;
-        params.language = language.empty() ? nullptr : language.c_str();
-        params.detect_language = resolved.detectLanguage && multilingual;
+        params.language = language.empty() ? "auto" : language.c_str();
+        params.detect_language = false;
 
         const auto start = Clock::now();
         const int status = whisper_full(context_, params, pcmMono16k.data(),
