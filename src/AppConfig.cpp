@@ -162,6 +162,8 @@ AppConfig loadConfig(int argc, char** argv) {
             config.showHelp = true;
         } else if (arg == "--list-models") {
             config.listModels = true;
+        } else if (arg == "--interactive") {
+            config.interactive = true;
         } else if (arg == "--cpu") {
             config.useGpu = false;
         } else if (arg == "--translate") {
@@ -228,13 +230,16 @@ std::string usageText() {
     std::ostringstream out;
     out << "WhisperFlowClone - local, offline speech-to-text for Windows\n\n";
     out << "Usage: WhisperFlowClone [options]\n\n";
-    out << "  (no options)        record from the microphone, transcribe, print the text\n";
+    out << "  (no options)        run in the background: hold the push-to-talk hotkey, speak,\n";
+    out << "                      release - the text is pasted into the focused window\n";
+    out << "  --interactive       console mode: Enter starts recording, Enter transcribes\n";
     out << "  --model <path>      use this ggml model file\n";
     out << "  --model-name <name> tiny | base | small (default) | medium\n";
     out << "  --language <code>   auto (default), ru, en, de, ...\n";
     out << "  --threads <n>       inference threads, 0 = all logical cores\n";
     out << "  --wav <file>        transcribe a 16-bit/float WAV file instead of the microphone\n";
     out << "  --save-wav <file>   also write the captured audio to this WAV file\n";
+    out << "                      (microphone modes only)\n";
     out << "  --translate         translate the result to English\n";
     out << "  --cpu               do not use a GPU backend even if one is compiled in\n";
     out << "  --list-models       show where models are looked up and what is installed\n";

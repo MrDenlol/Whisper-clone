@@ -14,10 +14,13 @@ Speech recognition runs **100% locally** with [whisper.cpp](https://github.com/g
 | :--- | :--- |
 | Microphone capture (WASAPI, 16 kHz mono float) | ✅ done |
 | Local STT engine (whisper.cpp v1.9.3, CPU) | ✅ done |
-| `mic → buffer → transcribe → text + timings` in the console | ✅ done |
+| Global push-to-talk hotkey (hold to talk, release to paste) | ✅ done |
+| Paste into the focused window (clipboard + `SendInput`, clipboard restored) | ✅ done |
+| Silence / too-short / no-words filter — nothing is pasted for empty speech | ✅ done |
+| Single-session guard — a second press cannot start a parallel session | ✅ done |
 | Model discovery + config file + model downloader script | ✅ done |
-| Unit tests (22 cases) + CI on Windows and Linux | ✅ done |
-| Global hotkey, paste into the focused window, tray UI | ⏳ next |
+| Unit tests (28 cases) + CI on Windows and Linux | ✅ done |
+| Tray icon, per-app settings UI, hidden window (no console) | ⏳ next |
 
 See [docs/STATUS.md](./docs/STATUS.md) for the detailed breakdown and the plan.
 
@@ -61,6 +64,45 @@ Real-time:  0.37x  (inference time / audio time, lower is better)
 
 ---
 
+## How it behaves
+
+Run `WhisperFlowClone.exe` and leave it running:
+
+1. **Hold `Ctrl + Win + Space`** — recording starts immediately (the model is already warm).
+2. **Speak.**
+3. **Release** — recording stops, the buffer is transcribed locally, and the text is
+   inserted into whatever window has focus.
+
+Details worth knowing:
+
+- **The hotkey is a constant** for now: `kPushToTalk` in [`include/Hotkey.h`](./include/Hotkey.h)
+  (`MOD_CONTROL | MOD_WIN` + `VK_SPACE`). It moves into `config.ini` in a later step.
+- **Release detection.** `RegisterHotKey` only reports the press, so after `WM_HOTKEY` the
+  app polls `GetAsyncKeyState` every 20 ms until the combination is let go.
+- **Paste** = copy the transcript to the clipboard → `Ctrl+V` via `SendInput` → put the
+  previous clipboard text back after 250 ms. If the paste fails, the transcript **stays on
+  the clipboard** and the console says so, so you can press `Ctrl+V` yourself.
+- **Empty speech is dropped.** Buffers under 400 ms, below ~-40 dBFS peak, or transcripts
+  with no words in them (`"."`, `"..."`, `"[Music]"`) are never pasted — see
+  [`include/SpeechGate.h`](./include/SpeechGate.h).
+- **No overlapping sessions.** `SessionGuard` refuses a second press while recording or
+  transcribing and logs why.
+- Inference runs on a worker thread, so the message loop (and release detection) never
+  stalls.
+
+Console fallback without the hotkey:
+
+```cmd
+.\build\bin\WhisperFlowClone.exe --interactive
+```
+
+### Microphone permission
+
+`Settings → Privacy & security → Microphone → Let desktop apps access your microphone → On`.
+Full walkthrough, device selection and paste/UIPI caveats: **[docs/MICROPHONE.md](./docs/MICROPHONE.md)**.
+
+---
+
 ## Where to put the model
 
 Models are downloaded at runtime and never committed (see [.gitignore](./.gitignore)).
@@ -87,7 +129,8 @@ Check what is installed with `WhisperFlowClone.exe --list-models`.
 
 | Option | Meaning |
 | :--- | :--- |
-| *(none)* | record from the microphone, transcribe, print text and timings |
+| *(none)* | run in the background: hold the push-to-talk hotkey, release to paste |
+| `--interactive` | console mode: `Enter` starts recording, `Enter` transcribes |
 | `--model <path>` | use this ggml model file |
 | `--model-name <name>` | `tiny` \| `base` \| `small` (default) \| `medium` |
 | `--language <code>` | `auto` (default), `ru`, `en`, `de`, ... |

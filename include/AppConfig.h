@@ -17,6 +17,7 @@ struct AppConfig {
     bool translateToEnglish{false};
     std::filesystem::path wavInput;         // transcribe a file instead of the microphone
     std::filesystem::path saveRecording;    // dump the captured audio next to the transcript
+    bool interactive{false};                // Enter-to-record console mode instead of the hotkey
     bool listModels{false};
     bool showHelp{false};
     bool valid{true};

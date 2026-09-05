@@ -128,6 +128,8 @@ endfunction()
 add_library(whisperflow_core STATIC
     src/AppConfig.cpp
     src/ModelLocator.cpp
+    src/SpeechGate.cpp
+    src/TextInjector.cpp
     src/Transcriber.cpp
     src/WavFile.cpp
 )
@@ -153,7 +155,10 @@ whisperflow_apply_strict_warnings(WhisperFlowClone)
 if(WIN32)
     # WASAPI microphone capture lives behind this flag so that the rest of the
     # pipeline (model lookup, inference, WAV input) stays buildable elsewhere.
-    target_sources(WhisperFlowClone PRIVATE src/AudioCapture.cpp)
+    target_sources(WhisperFlowClone PRIVATE
+        src/AudioCapture.cpp
+        src/Hotkey.cpp
+    )
     target_link_libraries(WhisperFlowClone PRIVATE ole32 uuid)
     target_compile_definitions(WhisperFlowClone PRIVATE WHISPERFLOW_HAS_MICROPHONE=1)
 endif()
