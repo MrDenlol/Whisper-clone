@@ -1,9 +1,12 @@
 # CMake / MSVC build directories
 /build/
+build/
 /out/
 /cmake-build-*/
 /.vs/
+.vs/
 /CMakeUserPresets.json
+/CMakeCache.txt
 x64/
 x86/
 Debug/
@@ -26,6 +29,7 @@ Release/
 *.onnx
 *.safetensors
 /models/
+models/
 
 # Secrets, Environment & Local Configurations
 .env

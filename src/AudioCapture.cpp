@@ -1,4 +1,5 @@
 #include "AudioCapture.h"
+#include "Resampler.h"
 
 #include <iostream>
 #include <thread>
@@ -22,44 +23,6 @@ DEFINE_GUID(IID_IAudioClient,         0x1cb9ad4c, 0xdbfa, 0x4c32, 0xb1, 0x78, 0x
 DEFINE_GUID(IID_IAudioCaptureClient,  0xc8adbd64, 0xe71e, 0x48a0, 0xa4, 0xde, 0x18, 0x5c, 0x39, 0x5c, 0x31, 0x70);
 
 namespace whisperflow {
-
-class Resampler {
-public:
-    Resampler(uint32_t inRate, uint32_t outRate)
-        : inRate_(inRate), outRate_(outRate) {}
-
-    std::vector<float> process(const float* input, size_t numFrames) {
-        if (inRate_ == outRate_) {
-            return std::vector<float>(input, input + numFrames);
-        }
-
-        std::vector<float> output;
-        if (numFrames == 0) return output;
-
-        double ratio = static_cast<double>(inRate_) / static_cast<double>(outRate_);
-        output.reserve(static_cast<size_t>(numFrames / ratio) + 2);
-
-        while (inPos_ < static_cast<double>(numFrames)) {
-            size_t idx = static_cast<size_t>(inPos_);
-            double frac = inPos_ - idx;
-
-            float s0 = input[idx];
-            float s1 = (idx + 1 < numFrames) ? input[idx + 1] : s0;
-            float val = s0 + static_cast<float>(frac) * (s1 - s0);
-
-            output.push_back(val);
-            inPos_ += ratio;
-        }
-
-        inPos_ -= static_cast<double>(numFrames);
-        return output;
-    }
-
-private:
-    uint32_t inRate_;
-    uint32_t outRate_;
-    double inPos_{0.0};
-};
 
 class AudioCapture::Impl {
 public:
