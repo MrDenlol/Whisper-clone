@@ -60,11 +60,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Compiler version
+        run: |
+          gcc --version
+          g++ --version
+          cmake --version
+
       - name: Configure CMake
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DWHISPERFLOW_BUILD_TESTS=ON
 
       - name: Build Project
-        run: cmake --build build -j 4
+        run: |
+          set -o pipefail
+          if ! cmake --build build -j 2 2>&1 | tee build.log; then
+            echo "=== build failed; surfacing diagnostics as annotations ==="
+            grep -nE "error:|warning:|Error|required from|note:" build.log | head -60 \
+              | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          fi
 
       - name: Run unit tests
         run: ctest --test-dir build --output-on-failure
