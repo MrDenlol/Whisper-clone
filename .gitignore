@@ -1,0 +1,23 @@
+# CMake / MSVC
+/build/
+/out/
+/cmake-build-*/
+/.vs/
+/CMakeUserPresets.json
+
+# Compiled objects
+*.obj
+*.o
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.lib
+*.exp
+
+# IDE / OS
+*.user
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
