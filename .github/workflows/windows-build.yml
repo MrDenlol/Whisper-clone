@@ -2,16 +2,20 @@ name: Windows Build
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "**" ]
   pull_request:
     branches: [ "main", "master" ]
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
-    name: Build (MSVC Release)
+    name: Windows (MSVC, Release)
     runs-on: windows-latest
 
     steps:
@@ -19,7 +23,76 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configure CMake
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DWHISPERFLOW_BUILD_TESTS=OFF
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DWHISPERFLOW_BUILD_TESTS=ON
 
       - name: Build Project
         run: cmake --build build --config Release
+
+      - name: Run unit tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: PowerShell script parses
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\scripts\download-model.ps1), [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }
+          Write-Host "download-model.ps1 parses cleanly"
+
+      - name: Smoke test (no model installed -> exit code 3 with guidance)
+        shell: pwsh
+        run: |
+          & .\build\bin\WhisperFlowClone.exe --list-models
+          if ($LASTEXITCODE -ne 0) { throw "--list-models exited with $LASTEXITCODE" }
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: WhisperFlowClone-windows-x64
+          path: build/bin/WhisperFlowClone.exe
+          if-no-files-found: error
+
+  linux:
+    name: Linux (GCC, CPU)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DWHISPERFLOW_BUILD_TESTS=ON
+
+      - name: Build Project
+        run: cmake --build build -j 4
+
+      - name: Run unit tests
+        run: ctest --test-dir build --output-on-failure
+
+  license-audit:
+    name: License audit (no copyleft)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Project license is MIT
+        run: head -1 LICENSE | grep -q "MIT License"
+
+      - name: No copyleft license text in the repository
+        run: |
+          # .github is excluded: this pattern itself contains the phrases it looks for.
+          if grep -rIl -E "GNU GENERAL PUBLIC LICENSE|GNU LESSER GENERAL PUBLIC LICENSE|GNU AFFERO GENERAL PUBLIC LICENSE|Server Side Public License" . --exclude-dir=.git --exclude-dir=.github; then
+            echo "Copyleft license text found - this project only allows MIT/BSD/Apache-2.0/Unlicense/CC0."
+            exit 1
+          fi
+          echo "No copyleft license text found."
+
+      - name: Pinned dependency is the one documented in LICENSES.md
+        run: |
+          grep -q "whisper.cpp/archive/refs/tags/v1.9.3.tar.gz" CMakeLists.txt
+          grep -q "1650f884effba487025143bd8facd2f9fb40a83b3737a732803c67a8d659d9c0" CMakeLists.txt
+          grep -q "whisper.cpp" LICENSES.md
+          grep -q "ggml" LICENSES.md
+          echo "Dependency pin matches LICENSES.md."

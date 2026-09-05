@@ -3,80 +3,182 @@
 [![Windows Build](https://github.com/MrDenlol/Whisper-clone/actions/workflows/windows-build.yml/badge.svg)](https://github.com/MrDenlol/Whisper-clone/actions/workflows/windows-build.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
-An open-source, ultra-fast **Whisper-Flow clone for Windows**. 
-Designed for high performance, zero-latency dictation, and complete privacy by running 100% locally on your machine.
+An open-source **Whisper-Flow clone for Windows**: press, speak, get text.
+Speech recognition runs **100% locally** with [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT) — no cloud, no API keys, no telemetry.
 
 ---
 
-##  Key Features
+## Current status
 
-- **Global Hotkey:** Instant start/stop dictation from any application.
-- **Audio Pipeline:** WASAPI low-latency microphone audio capture.
-- **Local STT:** Fast, local AI speech recognition (no cloud, no API keys required).
-- **Auto-Paste:** Direct text insertion into the currently focused window via Win32 API.
-- **100% Private & Offline:** Zero network requests, zero telemetry.
+| Stage | State |
+| :--- | :--- |
+| Microphone capture (WASAPI, 16 kHz mono float) | ✅ done |
+| Local STT engine (whisper.cpp v1.9.3, CPU) | ✅ done |
+| `mic → buffer → transcribe → text + timings` in the console | ✅ done |
+| Model discovery + config file + model downloader script | ✅ done |
+| Unit tests (22 cases) + CI on Windows and Linux | ✅ done |
+| Global hotkey, paste into the focused window, tray UI | ⏳ next |
+
+See [docs/STATUS.md](./docs/STATUS.md) for the detailed breakdown and the plan.
 
 ---
 
-## 🔒 Privacy & Local Processing Notice
+## Quick start (Windows)
 
-WhisperFlowClone operates **entirely offline on Windows**. Audio data recorded from your microphone is processed locally in RAM and fed directly into the local inference engine. No audio samples or transcriptions ever leave your computer.
+```cmd
+:: 1. Build (CMake downloads whisper.cpp v1.9.3 automatically - no submodules to init)
+cmake -S . -B build
+cmake --build build --config Release
+
+:: 2. Put a model where the app looks for it (models are NOT in git)
+.\scripts\download-model.ps1 -Model small
+
+:: 3. Run: Enter = start recording, Enter = stop and transcribe
+.\build\bin\WhisperFlowClone.exe
+```
+
+Output of a real run:
+
+```
+=== WhisperFlowClone - local offline speech-to-text ===
+whisper.cpp 1.9.3 | CPU : SSE3 = 1 | AVX = 1 | AVX2 = 1 | FMA = 1 | OPENMP = 1 | ...
+Model:      C:\Users\you\AppData\Local\WhisperFlowClone\models\ggml-small.bin
+Language:   auto
+Model load: 912 ms (warm)
+Press [Enter] to START recording...
+
+--- Recognized text ---
+Привет, это локальное распознавание речи без облака.
+(language: ru)
+
+--- Timing ---
+Audio:      4.18 s
+Capture:    4230 ms
+Model load: 0 ms (warm)
+Inference:  1540 ms
+Real-time:  0.37x  (inference time / audio time, lower is better)
+```
 
 ---
 
-## 🛠️ Repository Structure
+## Where to put the model
+
+Models are downloaded at runtime and never committed (see [.gitignore](./.gitignore)).
+Full details, checksums and manual instructions: **[docs/MODELS.md](./docs/MODELS.md)**.
+
+Default location on Windows:
+
+```
+%LOCALAPPDATA%\WhisperFlowClone\models\ggml-small.bin
+```
+
+Search order used by the app (first hit wins):
+
+1. `--model <path>` / `model_path` in `config.ini`
+2. `%LOCALAPPDATA%\WhisperFlowClone\models\ggml-<size>.bin`
+3. `<exe dir>\models\ggml-<size>.bin` and `<exe dir>\ggml-<size>.bin` (portable layout)
+4. `.\models\ggml-<size>.bin` and `.\ggml-<size>.bin` (current directory)
+
+Check what is installed with `WhisperFlowClone.exe --list-models`.
+
+---
+
+## Command line
+
+| Option | Meaning |
+| :--- | :--- |
+| *(none)* | record from the microphone, transcribe, print text and timings |
+| `--model <path>` | use this ggml model file |
+| `--model-name <name>` | `tiny` \| `base` \| `small` (default) \| `medium` |
+| `--language <code>` | `auto` (default), `ru`, `en`, `de`, ... |
+| `--threads <n>` | inference threads, `0` = all logical cores (capped at 16) |
+| `--wav <file>` | transcribe a WAV file instead of the microphone (accuracy testing) |
+| `--save-wav <file>` | also dump the captured audio to a WAV file |
+| `--translate` | translate the result to English |
+| `--cpu` | ignore a GPU backend even if one was compiled in |
+| `--list-models` | show the search paths and installed models |
+| `--help` | usage |
+
+Config file `%LOCALAPPDATA%\WhisperFlowClone\config.ini` (all keys optional, command line wins):
+
+```ini
+model_name = small
+; model_path = D:\models\ggml-small.bin
+language   = ru
+threads    = 0
+use_gpu    = true
+translate  = false
+```
+
+---
+
+## Build options
+
+| Option | Default | Effect |
+| :--- | :--- | :--- |
+| `WHISPERFLOW_BUILD_TESTS` | `OFF` | builds `WhisperFlowTests` and registers it with CTest |
+| `WHISPERFLOW_NATIVE` | `ON` | tunes ggml kernels for the build machine's CPU (`GGML_NATIVE`) |
+| `WHISPERFLOW_USE_VULKAN` | `OFF` | optional Vulkan backend; needs the Vulkan SDK (`glslc` + SPIRV-Headers) |
+| `WHISPERFLOW_USE_CUDA` | `OFF` | optional CUDA backend; needs the CUDA toolkit. **Never required.** |
+| `WHISPERFLOW_WHISPER_CPP_URL` | v1.9.3 tarball | dependency source, pinned together with `WHISPERFLOW_WHISPER_CPP_SHA256` |
+
+The default build is **CPU-only** and needs nothing but a C++20 compiler and CMake.
+
+```cmd
+cmake -S . -B build -DWHISPERFLOW_BUILD_TESTS=ON
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
+```
+
+### Dependency resolution
+
+`CMakeLists.txt` prefers a vendored copy and falls back to a pinned download:
+
+1. `third_party/whisper.cpp/` — use this for a fully offline build.
+2. Otherwise CMake downloads `whisper.cpp v1.9.3` and verifies its SHA256.
+
+No `git submodule update --init` step to forget, no unpinned `main` branch.
+
+---
+
+## Repository structure
 
 ```
 WhisperFlowClone/
-├── assets/          # Icons and visual assets
-├── cmake/           # Custom CMake modules and helper scripts
-├── include/         # Public header files (.h)
-├── src/             # Source files (.cpp)
-├── third_party/     # Vendor dependencies (permissive licenses only)
-├── .github/         # CI/CD workflows
-├── CMakeLists.txt   # Main CMake build configuration
-├── LICENSE          # MIT License
-├── LICENSES.md      # Matrix of dependencies and licenses
-└── NOTICE           # Project notices and compliance info
+├── assets/          # icons and visual assets
+├── cmake/           # custom CMake modules
+├── docs/            # STATUS.md, MODELS.md
+├── include/         # public headers: AudioCapture, Transcriber, ModelLocator, AppConfig, WavFile
+├── scripts/         # model downloaders (PowerShell / bash)
+├── src/             # implementation
+├── tests/           # dependency-free unit tests
+├── third_party/     # optional vendored dependencies (permissive licenses only)
+├── .github/         # CI workflows
+├── CMakeLists.txt
+├── LICENSE          # MIT
+├── LICENSES.md      # dependency license matrix
+└── NOTICE
 ```
 
 ---
 
-## ⚙️ Building from Source
+## Requirements
 
-### Prerequisites
-
-- **OS:** Windows 10 / Windows 11 (x64)
-- **Compiler:** Visual Studio 2022 with **Desktop development with C++** workload (MSVC 19.30+)
-- **Build System:** CMake 3.24 or higher
-- **C++ Standard:** C++20
-
-### Quick Start
-
-1. **Clone the repository:**
-   ```cmd
-   git clone https://github.com/MrDenlol/Whisper-clone.git
-   cd Whisper-clone
-   ```
-
-2. **Configure with CMake:**
-   ```cmd
-   cmake -S . -B build -DWHISPERFLOW_BUILD_TESTS=OFF
-   ```
-
-3. **Build Release executable:**
-   ```cmd
-   cmake --build build --config Release
-   ```
-
-4. **Run the executable:**
-   ```cmd
-   .\build\Release\WhisperFlowClone.exe
-   ```
+- **OS:** Windows 10 / 11 (x64)
+- **Compiler:** Visual Studio 2022, *Desktop development with C++* (MSVC 19.30+)
+- **Build system:** CMake 3.24+
+- **Standard:** C++20, `/W4 /WX /permissive-`
 
 ---
 
-## 📜 License
+## Privacy
 
-This project is released under the [MIT License](./LICENSE).  
-For third-party component licenses and compliance policies, see [LICENSES.md](./LICENSES.md).
+Audio is captured with WASAPI, kept in RAM as 16 kHz mono float, transcribed by a local model
+and printed. Nothing is uploaded anywhere: the binary makes no network calls at runtime.
+
+---
+
+## License
+
+This project is released under the [MIT License](./LICENSE).
+Third-party components and their licenses: [LICENSES.md](./LICENSES.md).
