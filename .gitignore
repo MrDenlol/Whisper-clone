@@ -1,11 +1,15 @@
-# CMake / MSVC
+# CMake / MSVC build directories
 /build/
 /out/
 /cmake-build-*/
 /.vs/
 /CMakeUserPresets.json
+x64/
+x86/
+Debug/
+Release/
 
-# Compiled objects
+# Compiled objects & binaries
 *.obj
 *.o
 *.pdb
@@ -15,8 +19,24 @@
 *.lib
 *.exp
 
+# AI Models & Large Weights (Do not commit to Git)
+*.bin
+*.gguf
+*.pt
+*.onnx
+*.safetensors
+/models/
+
+# Secrets, Environment & Local Configurations
+.env
+*.env.*
+*.pem
+*.key
+*.secret
+
 # IDE / OS
 *.user
+*.suo
 .idea/
 .vscode/
 Thumbs.db

@@ -1,0 +1,9 @@
+WhisperFlowClone
+Copyright (c) 2026 MrDenlol
+
+This product is a 100% local, privacy-focused speech-to-text Windows application designed for low-latency dictation.
+
+Key Characteristics:
+- Windows-Only: Utilizes native Windows APIs (WASAPI / Win32 Global Hotkeys / Win32 Input Injection).
+- 100% Offline & Local: All speech recognition model inference runs on-device using local weights. No audio, transcripts, or telemetry are transmitted to any cloud services.
+- Permissive Licensing: All codebase components and integrated dependencies comply with non-copyleft open-source licenses (MIT/Apache-2.0/BSD).

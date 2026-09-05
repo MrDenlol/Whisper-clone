@@ -1,0 +1,25 @@
+name: Windows Build
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (MSVC Release)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DWHISPERFLOW_BUILD_TESTS=OFF
+
+      - name: Build Project
+        run: cmake --build build --config Release
