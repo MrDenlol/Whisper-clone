@@ -846,7 +846,8 @@ private:
         std::error_code existsError;
         if (!std::filesystem::exists(settingsPath_, existsError)) {
             std::string error;
-            whisperflow::saveSettings(settingsPath_, settings_, error);
+            const bool saved = whisperflow::saveSettings(settingsPath_, settings_, error);
+            (void)saved;
         }
         ShellExecuteW(nullptr, L"open", settingsPath_.wstring().c_str(), nullptr, nullptr,
                       SW_SHOWNORMAL);
@@ -854,8 +855,8 @@ private:
 
     void saveCurrentSettings() {
         std::string error;
-        whisperflow::saveSettings(settingsPath_, settings_, error);
-        if (!error.empty()) {
+        const bool saved = whisperflow::saveSettings(settingsPath_, settings_, error);
+        if (!saved || !error.empty()) {
             setStatus("Settings save error: " + error);
         }
     }
