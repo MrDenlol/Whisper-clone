@@ -1,5 +1,9 @@
 #include "TrayIcon.h"
 
+#if defined(_WIN32)
+#include <shellapi.h>
+#endif
+
 #include <cstring>
 #include <optional>
 #include <string>
