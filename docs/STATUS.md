@@ -13,6 +13,7 @@
 | 4. Продукт: хоткей, вставка, защита сессии, фильтр тишины | ✅ | `src/Hotkey.cpp`, `src/TextInjector.cpp`, `include/SessionGuard.h`, `src/SpeechGate.cpp` |
 | 5. Скорость: VAD-обрезка тишины, сжатие `audio_ctx`, потокобезопасный аккумулятор, тайминги | ✅ | `src/Vad.cpp`, `include/AudioBuffer.h`, `audioContextForSamples()` в `src/Transcriber.cpp` |
 | 6. Продукт: трей, settings.json, история фраз, автозапуск, скрытое окно (без консоли) | ✅ | `src/TrayIcon.cpp`, `src/Overlay.cpp`, `src/Settings.cpp`, `src/PhraseHistory.cpp`, `src/Autostart.cpp`, `--tray` в `src/main.cpp` |
+| 7. Сдача: релизная папка `dist/` (exe + MSVC DLL, без PDB), скрипт модели с SHA-1, LICENSES.md, CONTRIBUTING.md, аудит мусора/секретов в CI | ✅ | `install(... COMPONENT whisperflow)` в `CMakeLists.txt`, `scripts/package_release.ps1`, `scripts/download_model.ps1`, джоба `License audit` |
 
 ## Слой 6: трей-режим
 
@@ -75,21 +76,20 @@
 ## Что проверялось локально (песочница Linux, без MSVC и без модели)
 
 ```
-g++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -Iinclude -fsyntax-only <каждый src/*.cpp>
-g++ ... tests/test_*.cpp src/{AppConfig,Autostart,ModelLocator,PhraseHistory,Settings,SpeechGate,WavFile,HotkeySpec,TextInjector}.cpp \
-    -o wftests && ./wftests
-→ 62/62 test cases passed   (70 в проекте; 8 из них в `test_transcriber.cpp`, нужен `whisper.h`)
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DWHISPERFLOW_BUILD_TESTS=ON
+cmake --build build          # whisper.cpp v1.9.3 + ggml + whisperflow_core + WhisperFlowTests, -Wall -Wextra -Wpedantic -Werror
+ctest --test-dir build       # 81/81 test cases passed
+cmake --install build --prefix dist --component whisperflow
+                             # dist/: бинарник, settings.example.json, dictionary.json, LICENSE*, NOTICE,
+                             # README.md, models/README.txt, scripts/download_model.ps1 - и ничего лишнего
 ```
 
-Эти прогоны покрывают `SpeechGate`, `SessionGuard`, `ModelLocator`, `AppConfig`, `HotkeySpec`,
-`Settings`, `PhraseHistory`, `Autostart` (командная строка) и Linux-ветку `TextInjector`.
-Они **не** покрывают `Transcriber.cpp` (нужен `whisper.h`) и Win32-модули `Hotkey`/`TextInjector`/
-`AudioCapture` (нужен `windows.h`) — их компилирует CI на `windows-latest` с `/W4 /WX`.
-Win32-часть `TrayIcon`/`Overlay`/autostart-реестр собирается только Windows-джобом CI.
-
-Локальный прогон уже поймал две настоящие ошибки, которые иначе уехали бы в репозиторий:
-неиспользуемый параметр в Linux-ветке `TextInjector::inject` (`-Werror`) и
-`isMeaningfulText("[Blues] [Music]") == true` — такой текст вставлялся бы в документ.
+Это покрывает всё, что не зависит от `windows.h`: `Transcriber` (с настоящим `whisper.h`),
+`SpeechGate`, `SessionGuard`, `ModelLocator`, `AppConfig`, `HotkeySpec`, `Settings`,
+`PhraseHistory`, `TextNormalizer`, `Vad`, `WavFile`, `Autostart` (командная строка), Linux-ветку
+`TextInjector`. Win32-модули (`AudioCapture`, `Hotkey`, `Overlay`, `TrayIcon`, `WinMain`) компилирует
+только CI на `windows-latest` с `/W4 /WX` — он же собирает `dist/` с MSVC-DLL и проверяет, что в
+нём нет `.pdb`/`.lib`/`.bin`.
 
 ## Что проверялось в CI (прошлый шаг, коммит `48984a4` → `main` = `ca3e121`)
 
@@ -103,7 +103,6 @@ Win32-часть `TrayIcon`/`Overlay`/autostart-реестр собираетс�
 | :--- | :--- | :--- |
 | `include/Resampler.h` | даунсемплинг линейной интерполяцией без антиалиасингового ФНЧ | точность распознавания |
 | `src/AudioCapture.cpp:127` | буфер клиента WASAPI = 1 с при `EVENTCALLBACK` | скорость отклика |
-| `include/AudioCapture.h:22-23` | move-конструктор не обнуляет `pImpl_` источника | стабильность (латентно) |
 | `src/TextInjector.cpp` | восстанавливается только текст (`CF_UNICODETEXT`); файлы/картинки из буфера теряются | продуктовая полнота |
 
 ## Что показал первый прогон на живом Windows (не в CI)
@@ -120,6 +119,19 @@ CI только компилирует: ни микрофона, ни аудио
 Вывод, который стоит помнить: значения, набранные вручную (`DEFINE_GUID`, флаги чужого API),
 компилируются и линкуются при любой ошибке и падают только в рантайме. Где можно — брать
 константы из заголовков и линковать `uuid.lib`.
+
+## Шаг «подготовка к сдаче» (что изменилось в коде)
+
+- `src/main.cpp`: в трей-режиме оверлей теперь показывает `Transcribing...` (раньше — только
+  `Listening...`, хотя README это обещал); удалены мёртвые `UiState`/`state_`/`captureStart_`
+  и `(void)`-заглушки; при невозможности стартовать трей (хоткей занят, иконка не создалась)
+  показывается `MessageBox` с причиной вместо молчаливого выхода; `WinMain` подключается к
+  родительской консоли (`AttachConsole`), поэтому `--help`/`--list-models`/логи видны из
+  cmd/PowerShell, а двойной клик без аргументов запускает `--tray`.
+- `src/Autostart.cpp`: сборка строки без `"..." + std::string&&` — GCC 12 при `-O3` давал
+  ложный `-Werror=restrict` (замечено при локальной сборке Linux-ветки).
+- `scripts/download-model.*` → `scripts/download_model.*` (по ТЗ), с проверкой SHA-1.
+- Убраны пустые `assets/.gitkeep`, `cmake/.gitkeep` (папки давно непустые).
 
 ## План следующих шагов
 

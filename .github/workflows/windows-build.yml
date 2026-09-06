@@ -45,13 +45,15 @@ jobs:
       - name: Run unit tests
         run: ctest --test-dir build -C Release --output-on-failure
 
-      - name: PowerShell script parses
+      - name: PowerShell scripts parse
         shell: pwsh
         run: |
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\scripts\download-model.ps1), [ref]$null, [ref]$errors) | Out-Null
-          if ($errors) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }
-          Write-Host "download-model.ps1 parses cleanly"
+          foreach ($script in Get-ChildItem .\scripts\*.ps1) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors) { $errors | ForEach-Object { Write-Error "$($script.Name): $($_.Message)" }; exit 1 }
+            Write-Host "$($script.Name) parses cleanly"
+          }
 
       - name: Smoke test (no model installed -> exit code 3 with guidance)
         shell: pwsh
@@ -63,11 +65,33 @@ jobs:
           $proc = Start-Process -FilePath $exe -ArgumentList '--list-models' -Wait -NoNewWindow -PassThru
           if ($proc.ExitCode -ne 0) { throw "--list-models exited with $($proc.ExitCode)" }
 
-      - name: Upload executable
+      - name: Assemble release folder (dist/)
+        run: cmake --install build --config Release --prefix dist --component whisperflow
+
+      - name: Verify dist/ layout (exe + runtime DLLs, no debug artefacts, no models)
+        shell: pwsh
+        run: |
+          Get-ChildItem dist -Recurse -File | ForEach-Object { Write-Host ("  {0,10:N0} KiB  {1}" -f ($_.Length / 1KB), $_.FullName.Substring((Resolve-Path dist).Path.Length + 1)) }
+          foreach ($required in 'WhisperFlowClone.exe', 'msvcp140.dll', 'vcruntime140.dll', 'vcomp140.dll',
+                                'settings.example.json', 'dictionary.json', 'LICENSE', 'LICENSES.md', 'NOTICE',
+                                'README.md', 'scripts\download_model.ps1', 'models\README.txt') {
+            if (-not (Test-Path (Join-Path dist $required))) { throw "dist is missing $required" }
+          }
+          $forbidden = Get-ChildItem dist -Recurse -File -Include *.pdb, *.ilk, *.lib, *.exp, *.obj, *.bin
+          if ($forbidden) { $forbidden | ForEach-Object { Write-Host "::error::forbidden file in dist: $($_.FullName)" }; exit 1 }
+          Write-Host "dist/ layout OK"
+
+      - name: dist/ smoke test (runs from the release folder)
+        shell: pwsh
+        run: |
+          $proc = Start-Process -FilePath (Resolve-Path .\dist\WhisperFlowClone.exe) -ArgumentList '--help' -Wait -NoNewWindow -PassThru
+          if ($proc.ExitCode -ne 0) { throw "dist\WhisperFlowClone.exe --help exited with $($proc.ExitCode)" }
+
+      - name: Upload release folder
         uses: actions/upload-artifact@v4
         with:
           name: WhisperFlowClone-windows-x64
-          path: build/bin/WhisperFlowClone.exe
+          path: dist/
           if-no-files-found: error
 
   linux:
@@ -114,3 +138,20 @@ jobs:
           grep -q "whisper.cpp" LICENSES.md
           grep -q "ggml" LICENSES.md
           echo "Dependency pin matches LICENSES.md."
+
+      - name: No build junk, secrets or user-specific absolute paths tracked in git
+        run: |
+          set -e
+          if git ls-files | grep -E '(^|/)(build|dist|out|models)/|\.(pdb|exe|dll|lib|obj|bin|zip)$'; then
+            echo "Build output or binaries are tracked in git."; exit 1
+          fi
+          if git ls-files | grep -E '\.(env|pem|key|secret)$|(^|/)\.env'; then
+            echo "Secret-looking files are tracked in git."; exit 1
+          fi
+          if git grep -nIE '[A-Za-z]:\\Users\\[A-Za-z0-9_.-]+\\|/home/[a-z0-9_-]+/|/Users/[A-Za-z0-9_.-]+/' -- ':!.github' | grep -vE 'C:\\Users\\(you|<you>)\\'; then
+            echo "User-specific absolute path found - use %LOCALAPPDATA% / relative paths."; exit 1
+          fi
+          if git grep -nIiE '(api[_-]?key|secret[_-]?key|access[_-]?token|password)\s*[:=]\s*["'"'"'][^"'"'"']{8,}' -- ':!.github'; then
+            echo "Hard-coded credential found."; exit 1
+          fi
+          echo "Tree is clean."

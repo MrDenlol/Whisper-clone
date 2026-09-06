@@ -8,6 +8,97 @@ Speech recognition runs **100% locally** with [whisper.cpp](https://github.com/g
 
 ---
 
+## 2-minute walkthrough for the jury
+
+Everything below is what the shipped binary does today; nothing here is planned-but-missing.
+
+```powershell
+# 0. Unpack the release zip (WhisperFlowClone-<version>-win-x64.zip) anywhere, e.g. C:\WFC
+#    It already contains WhisperFlowClone.exe + the MSVC runtime DLLs. No installer, no admin rights.
+cd C:\WFC
+
+# 1. Download the model (~466 MiB, SHA-1 verified, from the official whisper.cpp collection).
+#    Models are never in git. Default location: %LOCALAPPDATA%\WhisperFlowClone\models\ggml-small.bin
+.\scripts\download_model.ps1 -Model small
+#    (for a fully portable folder use:  .\scripts\download_model.ps1 -Model small -Destination .\models)
+
+# 2. Check the app sees it
+.\WhisperFlowClone.exe --list-models
+
+# 3. Start the tray app (no console window; a double-click on the exe does the same)
+.\WhisperFlowClone.exe --tray
+```
+
+4. A **WhisperFlowClone icon appears in the system tray**; its tooltip reads
+   `WhisperFlowClone - Waiting for hotkey...`. Model loading (`small`, ~1 s warm-up) happens
+   before the icon appears.
+5. Click into any text field (Notepad, browser, Telegram, IDE).
+6. **Hold `Ctrl + Shift + Space`.** A small dark rounded pill with white text `Listening...`
+   appears at the bottom-centre of the primary screen, above the taskbar. It never takes focus.
+7. **Speak** a sentence in Russian (default language) — e.g. «Привет, это локальное
+   распознавание речи без облака».
+8. **Release the keys.** The pill switches to `Transcribing...`; after roughly 0.5–2 s on a
+   laptop CPU (model `small`, 3–5 s phrase) the text is pasted into the focused field via
+   `Ctrl+V`, the pill disappears and the tray tooltip changes to `WhisperFlowClone - Inserted`.
+   Your previous clipboard text is restored 250 ms later.
+
+What to expect while testing:
+
+| Action | Result |
+| :--- | :--- |
+| Hold the hotkey silently, release | nothing is pasted; tray status `Skipped (...)` with the reason (too short / too quiet / no words) |
+| Press the hotkey again while a phrase is still being transcribed | ignored; tray status `Busy: ...` — sessions never overlap |
+| Say «запятая», «точка», «вопросительный знак» | inserted as `,` `.` `?` ([dictionary.json](./dictionary.json), editable) |
+| Hotkey already taken by another app | an error message box at start-up; change `hotkey` in `settings.json` |
+| No internet after the model is downloaded | works identically — the binary makes no network calls at runtime |
+
+**Tray menu (right- or left-click the icon)**, top to bottom, exactly as built in
+[`src/TrayIcon.cpp`](./src/TrayIcon.cpp):
+
+```
+Status: Waiting for hotkey...            (read-only line, mirrors the tooltip)
+──────────────────────────────
+Repeat last insertion                    pastes the most recent accepted phrase again
+──────────────────────────────
+Language: ru (default)          ● 
+Language: auto
+Language: en
+Language: other (set in settings.json)   greyed out unless settings.json has another code
+──────────────────────────────
+Model: tiny
+Model: base
+Model: small                    ●        switching reloads the model in the background,
+Model: medium                            the pill shows "Loading medium..." meanwhile
+──────────────────────────────
+Open models folder                       opens %LOCALAPPDATA%\WhisperFlowClone\models in Explorer
+Open settings file                       opens settings.json in the default editor (creates it if missing)
+Start with Windows              ☐        HKCU\...\CurrentVersion\Run  ->  "<exe>" --tray
+──────────────────────────────
+Exit
+```
+
+Every menu change is written back to `settings.json` immediately.
+
+**Overlay** ([`src/Overlay.cpp`](./src/Overlay.cpp)): a borderless, always-on-top,
+non-activating (`WS_EX_NOACTIVATE`) window of about 120×34 px with a 1 px grey border,
+dark grey fill `RGB(32,32,32)` and white text in the default GUI font. It shows one of
+`Listening...`, `Transcribing...`, `Loading <model>...` and is hidden the rest of the time.
+
+**Where files live at runtime** (nothing is written anywhere else):
+
+| File | Location |
+| :--- | :--- |
+| model `ggml-<size>.bin` | `%LOCALAPPDATA%\WhisperFlowClone\models\` **or** `<exe dir>\models\` (portable) |
+| `settings.json`, `phrase_history.json` | `<exe dir>\` if a `settings.json` already exists there (portable), otherwise `%APPDATA%\WhisperFlowClone\` |
+| `dictionary.json` | `<exe dir>\` first, then next to `settings.json`, then built-in defaults |
+
+Troubleshooting in one line each: no text after release → check `Settings → Privacy →
+Microphone → Let desktop apps access your microphone` ([docs/MICROPHONE.md](./docs/MICROPHONE.md));
+`--list-models` shows nothing → the download went to a different folder, pass `--model <path>`;
+paste does not land in an **elevated** window → UIPI, run the app elevated too.
+
+---
+
 ## Current status
 
 | Stage | State |
@@ -19,29 +110,33 @@ Speech recognition runs **100% locally** with [whisper.cpp](https://github.com/g
 | Silence / too-short / no-words filter — nothing is pasted for empty speech | ✅ done |
 | Single-session guard — a second press cannot start a parallel session | ✅ done |
 | Latency: energy VAD trims silence + shrinks whisper's audio context for short clips | ✅ done |
-| Model discovery + config file + model downloader script | ✅ done |
-| Unit tests (81 cases) + CI on Windows and Linux | ✅ done |
-| Tray icon, settings.json UI, phrase history, autostart, hidden window (no console) | ✅ done |
+| Model discovery + config file + SHA-1-verified model downloader script | ✅ done |
+| Unit tests (81 cases) + CI on Windows and Linux + license audit | ✅ done |
+| Tray icon, settings.json, phrase history, autostart, overlay, no console window | ✅ done |
+| Release layout: `cmake --install … --component whisperflow` → `dist/` with exe + runtime DLLs, zip without PDB | ✅ done |
 
-See [docs/STATUS.md](./docs/STATUS.md) for the detailed breakdown and the plan.
+**Not implemented** (and not claimed anywhere else in this file): a settings window/GUI,
+microphone device selection (always the default capture device), streaming/partial results
+while the key is held, GPU builds in the release zip (CPU-only), an installer, signed binaries.
+See [docs/STATUS.md](./docs/STATUS.md) for the detailed breakdown and the known risks.
 
 ---
 
-## Quick start (Windows)
+## Build from source (Windows)
 
 ```cmd
-:: 1. Build (CMake downloads whisper.cpp v1.9.3 automatically - no submodules to init)
+:: 1. Build (CMake downloads whisper.cpp v1.9.3 automatically - pinned tag + SHA256, no submodules)
 cmake -S . -B build
 cmake --build build --config Release
 
 :: 2. Put a model where the app looks for it (models are NOT in git)
-.\scripts\download-model.ps1 -Model small
+.\scripts\download_model.ps1 -Model small
 
-:: 3. Run: Enter = start recording, Enter = stop and transcribe
+:: 3. Run: background hotkey mode with a log in this console
 .\build\bin\WhisperFlowClone.exe
 ```
 
-Output of a real run:
+Console output of a real run (`--interactive` mode, Enter starts / Enter stops):
 
 ```
 === WhisperFlowClone - local offline speech-to-text ===
@@ -62,6 +157,23 @@ Model load: 0 ms (warm)
 Inference:  1540 ms
 Real-time:  0.37x  (inference time / audio time, lower is better)
 ```
+
+### Release folder / zip for distribution
+
+```powershell
+.\scripts\package_release.ps1            # configure + build Release + cmake --install -> dist\ + zip
+.\scripts\package_release.ps1 -Portable  # additionally creates dist\settings.json (portable layout)
+
+:: or by hand, after the build above:
+cmake --install build --config Release --prefix dist --component whisperflow
+```
+
+`dist\` contains `WhisperFlowClone.exe`, the MSVC runtime DLLs (`vcruntime140.dll`,
+`vcruntime140_1.dll`, `msvcp140.dll`, `vcomp140.dll` for OpenMP), `settings.example.json`,
+`dictionary.json`, `LICENSE`, `LICENSES.md`, `NOTICE`, `README.md`, `scripts\download_model.ps1`
+and an empty `models\` folder. **No `.pdb`**, no `.lib`/`.obj`, and no model weights. whisper.cpp
+and ggml are linked statically. The CI workflow uploads the same `dist/` as the
+`WhisperFlowClone-windows-x64` artifact on every push.
 
 ---
 
@@ -103,6 +215,12 @@ Console fallback without the hotkey:
 .\build\bin\WhisperFlowClone.exe --interactive
 ```
 
+The executable is built as a Windows-subsystem binary so that `--tray` and autostart never
+open a console window. When started from `cmd.exe`/PowerShell it attaches to that console, so
+`--help`, `--list-models`, `--interactive` and the log lines are visible there. When started
+by **double-click** (or from `Start with Windows`) there is no console, and with no arguments
+the app behaves as `--tray`.
+
 ### Tray mode (background, no console)
 
 ```cmd
@@ -122,13 +240,15 @@ truth. It shows a tray icon with:
 - **Start with Windows** (HKCU `…\CurrentVersion\Run`, command `"<exe>" --tray`)
 - **Exit**
 
-A small always-on-top, non-activating overlay shows `Listening…` / `Transcribing…`
-around the actual dictation, so it never steals focus from the text editor.
+A small always-on-top, non-activating overlay shows `Listening...` / `Transcribing...`
+around the actual dictation (and `Loading <model>...` while switching models), so it never
+steals focus from the text editor. If the hotkey or the tray icon cannot be set up, a message
+box explains why and the process exits with code 6.
 
 Settings precedence:
 
 1. Portable `settings.json` next to the executable (wins when it exists)
-2. `%APPDATA%\WhisperFlowClone\settings.json` (portable layout in other OS builds)
+2. `%APPDATA%\WhisperFlowClone\settings.json` otherwise (created by `Open settings file`)
 
 Phrase history lands next to `settings.json` as `phrase_history.json`, is capped
 (`max_history_entries`, default 200), deduplicates consecutive repeats and is local-only.
@@ -166,9 +286,9 @@ Check what is installed with `WhisperFlowClone.exe --list-models`.
 
 | Model | Download | When to use |
 | :--- | :--- | :--- |
-| **small** | ~460 MB | **Recommended (and the default).** Good Russian accuracy with a live CPU response — the sweet spot for dictation and for the hackathon demo on a laptop. |
-| medium | ~1.4 GB | Noticeably better Russian, but slow on CPU. Use it when recording a demo/evaluations or when a GPU is available. |
-| base / tiny | ~140 / ~75 MB | Only for very weak hardware or quick smoke tests — Russian quality drops fast below small. |
+| **small** | 466 MiB | **Recommended (and the default).** Good Russian accuracy with a live CPU response — the sweet spot for dictation and for the hackathon demo on a laptop. |
+| medium | 1.5 GiB | Noticeably better Russian, but slow on CPU. Use it when recording a demo/evaluations or when a GPU is available. |
+| base / tiny | 142 / 75 MiB | Only for very weak hardware or quick smoke tests — Russian quality drops fast below small. |
 
 A GPU is **optional**: the CPU path (with VAD trimming + audio-context shrinking) already
 keeps `small` responsive for 2–5 s phrases. `use_gpu` / `--cpu` only matter if a GPU backend
@@ -342,17 +462,19 @@ No `git submodule update --init` step to forget, no unpinned `main` branch.
 
 ```
 WhisperFlowClone/
-├── assets/          # icons and visual assets
-├── cmake/           # custom CMake modules
+├── assets/          # app.ico / app.svg (own MIT artwork, embedded as resource 101)
+├── cmake/           # app.rc.in (resource script template)
 ├── dictionary.json  # editable spoken-punctuation dictionary (ru), optional
-├── docs/            # STATUS.md, MODELS.md
+├── docs/            # STATUS.md, MODELS.md, MICROPHONE.md
 ├── include/         # public headers: AudioCapture, Transcriber, TextNormalizer, AppConfig, ...
-├── scripts/         # model downloaders (PowerShell / bash)
+├── packaging/       # files copied into dist/ by cmake --install (models/README.txt)
+├── scripts/         # download_model.ps1/.sh (SHA-1 verified), package_release.ps1
 ├── src/             # implementation
 ├── tests/           # dependency-free unit tests + tests/utterances_ru.txt (manual quality run)
-├── third_party/     # optional vendored dependencies (permissive licenses only)
-├── .github/         # CI workflows
+├── third_party/     # optional vendored whisper.cpp for offline builds (permissive licenses only)
+├── .github/         # CI: Windows (MSVC) + Linux (GCC) builds, tests, license audit, dist artifact
 ├── CMakeLists.txt
+├── CONTRIBUTING.md  # how to build, standard, where code goes
 ├── LICENSE          # MIT
 ├── LICENSES.md      # dependency license matrix
 └── NOTICE
@@ -362,10 +484,10 @@ WhisperFlowClone/
 
 ## Requirements
 
-- **OS:** Windows 10 / 11 (x64)
-- **Compiler:** Visual Studio 2022, *Desktop development with C++* (MSVC 19.30+)
-- **Build system:** CMake 3.24+
-- **Standard:** C++20, `/W4 /WX /permissive-`
+- **Run:** Windows 10 / 11 (x64), a microphone, ~1 GB RAM free for `small`. No admin rights,
+  no installer; the release zip ships the MSVC runtime DLLs.
+- **Build:** Visual Studio 2022, *Desktop development with C++* (MSVC 19.30+), CMake 3.24+
+- **Standard:** C++20, `/W4 /WX /permissive-` (see [CONTRIBUTING.md](./CONTRIBUTING.md))
 
 ---
 

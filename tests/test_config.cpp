@@ -109,6 +109,6 @@ WF_TEST(Config_recognisesHelpAndFileInputs) {
 WF_TEST(Config_usageTextDocumentsModelLocation) {
     const std::string usage = whisperflow::usageText();
     WF_CHECK(usage.find("ggml-small.bin") != std::string::npos);
-    WF_CHECK(usage.find("download-model.ps1") != std::string::npos);
+    WF_CHECK(usage.find("download_model.ps1") != std::string::npos);
     WF_CHECK(!whisperflow::configFilePath().empty());
 }

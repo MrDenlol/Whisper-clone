@@ -194,3 +194,53 @@ if(WHISPERFLOW_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+# ---------------------------------------------------------------------------
+# Release layout:
+#   cmake --install build --config Release --prefix dist --component whisperflow
+#
+# One flat folder that runs from anywhere (USB stick, Downloads, ...):
+#   dist/WhisperFlowClone.exe        + the MSVC runtime DLLs it needs (/MD build)
+#   dist/settings.example.json       copy to settings.json next to the exe = portable
+#   dist/dictionary.json             editable spoken-punctuation dictionary
+#   dist/models/README.txt           drop ggml-*.bin here (or %LOCALAPPDATA%)
+#   dist/scripts/download_model.ps1  fetches + SHA-1-verifies a model
+#   dist/LICENSE, LICENSES.md, NOTICE, README.md
+#
+# Everything is tagged with the "whisperflow" component so that whisper.cpp's own
+# install rules (static .lib/.a files, headers, cmake config) stay out of dist/.
+# No PDB files are installed. See scripts/package_release.ps1 for the zip.
+# ---------------------------------------------------------------------------
+set(WHISPERFLOW_INSTALL_COMPONENT "whisperflow")
+
+install(TARGETS WhisperFlowClone
+        RUNTIME DESTINATION .
+        COMPONENT ${WHISPERFLOW_INSTALL_COMPONENT})
+
+install(FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/settings.example.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dictionary.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+    "${CMAKE_CURRENT_SOURCE_DIR}/LICENSES.md"
+    "${CMAKE_CURRENT_SOURCE_DIR}/NOTICE"
+    "${CMAKE_CURRENT_SOURCE_DIR}/README.md"
+    DESTINATION .
+    COMPONENT ${WHISPERFLOW_INSTALL_COMPONENT})
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/models-README.txt"
+        DESTINATION models RENAME README.txt
+        COMPONENT ${WHISPERFLOW_INSTALL_COMPONENT})
+install(PROGRAMS "${CMAKE_CURRENT_SOURCE_DIR}/scripts/download_model.ps1"
+        DESTINATION scripts
+        COMPONENT ${WHISPERFLOW_INSTALL_COMPONENT})
+
+if(MSVC)
+    # vcruntime140*.dll, msvcp140.dll and vcomp140.dll (OpenMP, used by ggml) from the
+    # Visual Studio redist folder - the same files the VC++ Redistributable installs.
+    set(CMAKE_INSTALL_OPENMP_LIBRARIES TRUE)
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_COMPONENT ${WHISPERFLOW_INSTALL_COMPONENT})
+    include(InstallRequiredSystemLibraries)
+    if(NOT CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
+        message(WARNING "MSVC redistributable DLLs were not found; dist/ will need the VC++ Redistributable installed")
+    endif()
+endif()
