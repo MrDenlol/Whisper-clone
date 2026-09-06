@@ -16,6 +16,8 @@ struct AppConfig {
     int threads{0};                         // 0 = all logical cores
     bool useGpu{true};                      // only used if a GPU backend is compiled in
     bool translateToEnglish{false};
+    bool vad{true};                         // trim leading/trailing silence before STT
+    bool shrinkContext{true};               // shrink whisper audio_ctx for short clips
     std::string hotkey{kDefaultHotkey};     // push-to-talk, e.g. "ctrl+shift+space", "f9"
     std::filesystem::path wavInput;         // transcribe a file instead of the microphone
     std::filesystem::path saveRecording;    // dump the captured audio next to the transcript

@@ -3,6 +3,7 @@
 #include "SessionGuard.h"
 #include "SpeechGate.h"
 #include "Transcriber.h"
+#include "Vad.h"
 #include "WavFile.h"
 
 #include <chrono>
@@ -16,6 +17,7 @@
 #include <vector>
 
 #if defined(WHISPERFLOW_HAS_MICROPHONE)
+#include "AudioBuffer.h"
 #include "AudioCapture.h"
 #include "Hotkey.h"
 #include "TextInjector.h"
@@ -71,6 +73,8 @@ void printTiming(const whisperflow::TranscriptionResult& result, double captureM
     std::cout << "Capture:    " << captureMs << " ms\n";
     std::cout << "Model load: " << result.modelLoadMs << " ms"
               << (result.modelLoadMs > 0.0 ? "" : " (warm)") << '\n';
+    std::cout << "Encode:     " << result.encodeMs << " ms\n";
+    std::cout << "Decode:     " << result.decodeMs << " ms\n";
     std::cout << "Inference:  " << result.inferenceMs << " ms\n";
     if (result.audioSeconds > 0.0) {
         std::cout << std::setprecision(2);
@@ -122,6 +126,20 @@ int runFromWavFile(const whisperflow::AppConfig& config, whisperflow::Transcribe
 
     std::cout << "[WAV] " << config.wavInput.string() << " - " << audio.sourceSampleRate << " Hz, "
               << audio.sourceChannels << " ch -> " << audio.samples.size() << " samples @ 16 kHz\n";
+
+    if (config.vad) {
+        const whisperflow::VadResult vad =
+            whisperflow::detectSpeech(audio.samples, whisperflow::Transcriber::kSampleRate);
+        if (vad.hasSpeech) {
+            std::cout << std::fixed << std::setprecision(0)
+                      << "[VAD] kept " << std::setprecision(2) << vad.keptSeconds << " s of "
+                      << vad.originalSeconds << " s (cut " << std::setprecision(0)
+                      << (vad.trimmedLeadingMs + vad.trimmedTrailingMs) << " ms of silence)\n";
+            audio.samples = std::vector<float>(
+                audio.samples.begin() + static_cast<std::ptrdiff_t>(vad.startSample),
+                audio.samples.begin() + static_cast<std::ptrdiff_t>(vad.endSample));
+        }
+    }
 
     return transcribeBuffer(std::move(audio.samples), readMs, transcriber, config.language);
 }
@@ -246,8 +264,8 @@ private:
     }
 
     void onAudioChunk(const std::vector<float>& chunk) {
-        std::lock_guard<std::mutex> lock(pcmMutex_);
-        pcm_.insert(pcm_.end(), chunk.begin(), chunk.end());
+        // Cheap append into a pre-reserved buffer: no per-callback allocation.
+        pcm_.append(chunk);
     }
 
     void onHotkeyPressed() {
@@ -256,23 +274,17 @@ private:
             return;
         }
 
-        {
-            std::lock_guard<std::mutex> lock(pcmMutex_);
-            pcm_.clear();
-        }
-
+        pcm_.clear();
+        captureStart_ = Clock::now();
         capture_.startRecording();
         logLine("[Record] listening... release to transcribe");
     }
 
     void onHotkeyReleased() {
         capture_.stopRecording();
+        const double captureMs = msSince(captureStart_);
 
-        std::vector<float> buffer;
-        {
-            std::lock_guard<std::mutex> lock(pcmMutex_);
-            buffer.swap(pcm_);
-        }
+        std::vector<float> buffer = pcm_.take();
 
         const whisperflow::SpeechVerdict verdict =
             whisperflow::evaluateSpeech(buffer, whisperflow::Transcriber::kSampleRate, gate_);
@@ -288,19 +300,36 @@ private:
             return;
         }
 
-        logLine("[Audio] " + std::to_string(static_cast<long long>(verdict.seconds * 1000.0)) +
-                " ms captured, rms " + std::to_string(verdict.rms) + " - recognizing");
-
         // The previous worker already finished (the guard was idle); reap it so
         // that assigning a new thread never hits a joinable std::thread.
         if (worker_.joinable()) {
             worker_.join();
         }
-        worker_ = std::thread(&DictationApp::transcribeAndInject, this, std::move(buffer));
+        worker_ = std::thread(&DictationApp::transcribeAndInject, this, std::move(buffer), captureMs);
     }
 
-    void transcribeAndInject(std::vector<float> buffer) {
-        transcriber_.transcribe(buffer, [this](const whisperflow::TranscriptionResult& result) {
+    void transcribeAndInject(std::vector<float> buffer, double captureMs) {
+        const double originalSeconds =
+            static_cast<double>(buffer.size()) / whisperflow::Transcriber::kSampleRate;
+
+        // VAD: drop leading/trailing silence so the encoder never sees it.
+        const auto vadStart = Clock::now();
+        whisperflow::VadResult vad;
+        if (config_.vad) {
+            vad = whisperflow::detectSpeech(buffer, whisperflow::Transcriber::kSampleRate,
+                                            vadSettings_);
+            if (vad.hasSpeech) {
+                buffer = std::vector<float>(
+                    buffer.begin() + static_cast<std::ptrdiff_t>(vad.startSample),
+                    buffer.begin() + static_cast<std::ptrdiff_t>(vad.endSample));
+            }
+        }
+        const double vadTrimMs = msSince(vadStart);
+        const double keptSeconds =
+            static_cast<double>(buffer.size()) / whisperflow::Transcriber::kSampleRate;
+
+        double injectMs = 0.0;
+        transcriber_.transcribe(buffer, [&](const whisperflow::TranscriptionResult& result) {
             if (!result.ok) {
                 logLine("[Error] " + result.error);
                 return;
@@ -313,16 +342,27 @@ private:
 
             logLine("[Text] " + result.text);
 
+            const auto injectStart = Clock::now();
             injector_.inject(result.text, [](const whisperflow::InjectionReport& report) {
                 logLine(std::string(report.pasted ? "[Paste] " : "[Paste failed] ") + report.message);
             });
+            injectMs = msSince(injectStart);
 
+            // Full latency breakdown, as the prompt asks for.
             std::ostringstream timing;
-            timing << "[Timing] audio " << std::fixed << std::setprecision(2) << result.audioSeconds
-                   << " s, inference " << std::setprecision(0) << result.inferenceMs << " ms";
+            timing << std::fixed << std::setprecision(0);
+            timing << "[Timing] capture " << captureMs << " ms"
+                   << " | vad_trim " << vadTrimMs << " ms"
+                   << " (kept " << std::setprecision(2) << keptSeconds << "/" << originalSeconds
+                   << " s, cut " << std::setprecision(0)
+                   << (vad.trimmedLeadingMs + vad.trimmedTrailingMs) << " ms)"
+                   << " | encode " << result.encodeMs << " ms"
+                   << " | decode " << result.decodeMs << " ms"
+                   << " | inject " << injectMs << " ms"
+                   << " | inference " << result.inferenceMs << " ms";
             if (result.audioSeconds > 0.0) {
-                timing << std::setprecision(2) << ", "
-                       << (result.inferenceMs / 1000.0) / result.audioSeconds << "x realtime";
+                timing << std::setprecision(2) << " ("
+                       << (result.inferenceMs / 1000.0) / result.audioSeconds << "x realtime)";
             }
             logLine(timing.str());
         });
@@ -340,9 +380,10 @@ private:
     whisperflow::TextInjector injector_;
     whisperflow::SessionGuard guard_;
     whisperflow::SpeechGateSettings gate_;
+    whisperflow::VadSettings vadSettings_;
 
-    std::mutex pcmMutex_;
-    std::vector<float> pcm_;
+    whisperflow::AudioBuffer pcm_;
+    Clock::time_point captureStart_{};
     std::thread worker_;
 };
 
@@ -455,6 +496,7 @@ int main(int argc, char** argv) {
     options.threads = config.threads;
     options.useGpu = config.useGpu;
     options.translateToEnglish = config.translateToEnglish;
+    options.shrinkContextForShortAudio = config.shrinkContext;
 
     whisperflow::Transcriber transcriber(options);
     transcriber.setLogHandler([](const std::string& line) {

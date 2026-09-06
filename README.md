@@ -18,8 +18,9 @@ Speech recognition runs **100% locally** with [whisper.cpp](https://github.com/g
 | Paste into the focused window (clipboard + `SendInput`, clipboard restored) | ✅ done |
 | Silence / too-short / no-words filter — nothing is pasted for empty speech | ✅ done |
 | Single-session guard — a second press cannot start a parallel session | ✅ done |
+| Latency: energy VAD trims silence + shrinks whisper's audio context for short clips | ✅ done |
 | Model discovery + config file + model downloader script | ✅ done |
-| Unit tests (28 cases) + CI on Windows and Linux | ✅ done |
+| Unit tests (44 cases) + CI on Windows and Linux | ✅ done |
 | Tray icon, per-app settings UI, hidden window (no console) | ⏳ next |
 
 See [docs/STATUS.md](./docs/STATUS.md) for the detailed breakdown and the plan.
@@ -144,6 +145,8 @@ Check what is installed with `WhisperFlowClone.exe --list-models`.
 | `--wav <file>` | transcribe a WAV file instead of the microphone (accuracy testing) |
 | `--save-wav <file>` | also dump the captured audio to a WAV file |
 | `--translate` | translate the result to English |
+| `--no-vad` | do not trim leading/trailing silence before recognition |
+| `--no-shrink-context` | keep whisper's full 30 s audio context (slower on short clips) |
 | `--cpu` | ignore a GPU backend even if one was compiled in |
 | `--list-models` | show the search paths and installed models |
 | `--help` | usage |
@@ -157,6 +160,27 @@ language   = ru
 threads    = 0
 use_gpu    = true
 translate  = false
+vad            = true   ; trim leading/trailing silence before recognition
+shrink_context = true   ; size whisper's audio context to the clip (faster short clips)
+```
+
+### Latency
+
+Two compounding optimisations shrink the "release key → text in the field" delay, both **on by
+default**:
+
+- **Energy VAD** ([`src/Vad.cpp`](./src/Vad.cpp)) — a dependency-free, MIT detector that drops the
+  dead air you always capture while reaching for and releasing the key. No ONNX/Silero, no extra
+  model file, no extra license.
+- **Audio-context shrinking** — whisper's encoder normally always processes a full 30 s window;
+  for a 2–5 s phrase the context is sized to the real clip length instead.
+
+For a typical 4.5 s hold (0.8 s silence + 2.5 s speech + 1.2 s silence) this cuts the encoder's
+work to **~10 %** of the naive "transcribe everything with the full window" path. Each utterance
+logs the full breakdown:
+
+```
+[Timing] capture 4230 ms | vad_trim 2 ms (kept 2.74/4.50 s, cut 1760 ms) | encode 180 ms | decode 320 ms | inject 45 ms | inference 500 ms (0.18x realtime)
 ```
 
 ---

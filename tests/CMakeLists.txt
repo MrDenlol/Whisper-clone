@@ -6,6 +6,7 @@ add_executable(WhisperFlowTests
     test_session_guard.cpp
     test_speech_gate.cpp
     test_transcriber.cpp
+    test_vad.cpp
     test_wav_file.cpp
 )
 
