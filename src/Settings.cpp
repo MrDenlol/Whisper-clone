@@ -412,8 +412,19 @@ std::string jsonString(const std::string& value) {
 namespace {
 
 std::string envValue(const char* name) {
+#if defined(_MSC_VER)
+    char* value = nullptr;
+    std::size_t length = 0;
+    if (_dupenv_s(&value, &length, name) == 0 && value != nullptr) {
+        const std::string result(value);
+        std::free(value);
+        return result;
+    }
+    return {};
+#else
     const char* value = std::getenv(name);
     return value != nullptr ? std::string(value) : std::string();
+#endif
 }
 
 std::filesystem::path settingsUserDirectory() {

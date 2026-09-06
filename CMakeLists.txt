@@ -180,6 +180,7 @@ if(WIN32)
         src/Hotkey.cpp
         src/Overlay.cpp
         src/TrayIcon.cpp
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/app.rc"
     )
     target_link_libraries(WhisperFlowClone PRIVATE ole32 uuid shell32)
     target_compile_definitions(WhisperFlowClone PRIVATE WHISPERFLOW_HAS_MICROPHONE=1)
