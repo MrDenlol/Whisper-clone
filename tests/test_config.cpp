@@ -53,14 +53,27 @@ WF_TEST(Config_appliesCommandLineOverrides) {
     WF_CHECK(config.translateToEnglish);
 }
 
-WF_TEST(Config_defaultsToSmallAndAutoLanguage) {
+WF_TEST(Config_defaultsToSmallAndRussianLanguage) {
     const whisperflow::AppConfig config = parse({});
     WF_CHECK(config.valid);
     WF_CHECK(config.modelSize == whisperflow::ModelSize::Small);
-    WF_CHECK_EQ(config.language, std::string("auto"));
+    WF_CHECK_EQ(config.language, std::string("ru"));
+    WF_CHECK(config.initialPrompt.empty());  // built-in per-language prompt
     WF_CHECK_EQ(config.threads, 0);
     WF_CHECK(!config.listModels);
     WF_CHECK(!config.showHelp);
+}
+
+WF_TEST(Config_parsesInitialPrompt) {
+    const whisperflow::AppConfig config =
+        parse({"--initial-prompt", "Расставляй запятые."});
+    WF_CHECK(config.valid);
+    WF_CHECK_EQ(config.initialPrompt, std::string("Расставляй запятые."));
+
+    // "auto" stays available for language detection.
+    const whisperflow::AppConfig autoLang = parse({"--language", "auto"});
+    WF_CHECK(autoLang.valid);
+    WF_CHECK_EQ(autoLang.language, std::string("auto"));
 }
 
 WF_TEST(Config_rejectsUnknownAndIncompleteOptions) {

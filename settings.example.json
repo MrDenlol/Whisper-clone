@@ -1,6 +1,7 @@
 {
   "model_name": "small",
-  "language": "auto",
+  "language": "ru",
+  "initial_prompt": "",
   "hotkey": "ctrl+shift+space",
   "threads": 0,
   "use_gpu": true,

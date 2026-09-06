@@ -5,6 +5,7 @@
 #include "SessionGuard.h"
 #include "Settings.h"
 #include "SpeechGate.h"
+#include "TextNormalizer.h"
 #include "Transcriber.h"
 #include "Vad.h"
 #include "WavFile.h"
@@ -92,7 +93,8 @@ void printTiming(const whisperflow::TranscriptionResult& result, double captureM
 }
 
 int transcribeBuffer(std::vector<float> pcm, double captureMs, whisperflow::Transcriber& transcriber,
-                     const std::string& languageHint) {
+                     const std::string& languageHint,
+                     const whisperflow::PunctuationDictionary& dictionary) {
     int exitCode = static_cast<int>(ExitCode::Ok);
     std::string failure;
 
@@ -103,7 +105,8 @@ int transcribeBuffer(std::vector<float> pcm, double captureMs, whisperflow::Tran
             return;
         }
 
-        std::cout << "\n--- Recognized text ---\n" << result.text << "\n";
+        const std::string text = whisperflow::normalizeTranscript(result.text, dictionary);
+        std::cout << "\n--- Recognized text ---\n" << text << "\n";
         if (!result.language.empty()) {
             std::cout << "(language: " << result.language;
             if (!languageHint.empty() && languageHint != "auto") {
@@ -120,7 +123,8 @@ int transcribeBuffer(std::vector<float> pcm, double captureMs, whisperflow::Tran
     return exitCode;
 }
 
-int runFromWavFile(const whisperflow::AppConfig& config, whisperflow::Transcriber& transcriber) {
+int runFromWavFile(const whisperflow::AppConfig& config, whisperflow::Transcriber& transcriber,
+                   const whisperflow::PunctuationDictionary& dictionary) {
     whisperflow::WavAudio audio;
     std::string error;
 
@@ -148,7 +152,8 @@ int runFromWavFile(const whisperflow::AppConfig& config, whisperflow::Transcribe
         }
     }
 
-    return transcribeBuffer(std::move(audio.samples), readMs, transcriber, config.language);
+    return transcribeBuffer(std::move(audio.samples), readMs, transcriber, config.language,
+                            dictionary);
 }
 
 int listInstalledModels(const whisperflow::ModelQuery& query) {
@@ -198,9 +203,11 @@ int listInstalledModels(const whisperflow::ModelQuery& query) {
 // window that has focus. The console only shows the log.
 class DictationApp {
 public:
-    DictationApp(const whisperflow::AppConfig& config, whisperflow::Transcriber& transcriber)
+    DictationApp(const whisperflow::AppConfig& config, whisperflow::Transcriber& transcriber,
+                 whisperflow::PunctuationDictionary dictionary)
         : config_(config),
           transcriber_(transcriber),
+          dictionary_(std::move(dictionary)),
           capture_([this](const std::vector<float>& chunk) { onAudioChunk(chunk); }) {}
 
     ~DictationApp() {
@@ -342,15 +349,18 @@ private:
                 return;
             }
 
-            if (!whisperflow::isMeaningfulText(result.text)) {
+            // Spoken punctuation + whitespace cleanup before anything is shown,
+            // injected or stored in the phrase history.
+            const std::string text = whisperflow::normalizeTranscript(result.text, dictionary_);
+            if (!whisperflow::isMeaningfulText(text)) {
                 logLine("[Skip] the recognizer heard no words - nothing inserted");
                 return;
             }
 
-            logLine("[Text] " + result.text);
+            logLine("[Text] " + text);
 
             const auto injectStart = Clock::now();
-            injector_.inject(result.text, [](const whisperflow::InjectionReport& report) {
+            injector_.inject(text, [](const whisperflow::InjectionReport& report) {
                 logLine(std::string(report.pasted ? "[Paste] " : "[Paste failed] ") + report.message);
             });
             injectMs = msSince(injectStart);
@@ -381,6 +391,7 @@ private:
 
     const whisperflow::AppConfig& config_;
     whisperflow::Transcriber& transcriber_;
+    whisperflow::PunctuationDictionary dictionary_;
     whisperflow::AudioCapture capture_;
     whisperflow::HotkeyManager hotkey_;
     whisperflow::HotkeyCombination hotkeyCombination_{};  // resolved from config_.hotkey
@@ -396,7 +407,8 @@ private:
 
 DictationApp* DictationApp::runningInstance_ = nullptr;
 
-int runInteractive(const whisperflow::AppConfig& config, whisperflow::Transcriber& transcriber) {
+int runInteractive(const whisperflow::AppConfig& config, whisperflow::Transcriber& transcriber,
+                   const whisperflow::PunctuationDictionary& dictionary) {
     std::mutex pcmMutex;
     std::vector<float> pcm;
     std::size_t lastReported = 0;
@@ -448,7 +460,8 @@ int runInteractive(const whisperflow::AppConfig& config, whisperflow::Transcribe
         }
     }
 
-    return transcribeBuffer(std::move(recorded), captureMs, transcriber, config.language);
+    return transcribeBuffer(std::move(recorded), captureMs, transcriber, config.language,
+                            dictionary);
 }
 
 // Tray build: no console, settings.json is the source of truth, the hidden window
@@ -456,12 +469,14 @@ int runInteractive(const whisperflow::AppConfig& config, whisperflow::Transcribe
 class TrayApp {
 public:
     TrayApp(std::unique_ptr<whisperflow::Transcriber> transcriber, whisperflow::Settings settings,
-            std::filesystem::path executableDirectory)
+            std::filesystem::path executableDirectory,
+            whisperflow::PunctuationDictionary dictionary)
         : settings_(std::move(settings)),
           executableDirectory_(std::move(executableDirectory)),
           settingsPath_(whisperflow::settingsFilePath(executableDirectory_)),
           historyPath_(whisperflow::phraseHistoryFilePath(executableDirectory_)),
           transcriber_(std::shared_ptr<whisperflow::Transcriber>(std::move(transcriber))),
+          dictionary_(std::move(dictionary)),
           capture_([this](const std::vector<float>& chunk) { onAudioChunk(chunk); }) {}
 
     ~TrayApp() {
@@ -654,12 +669,15 @@ private:
                 message = result.error;
                 return;
             }
-            if (!whisperflow::isMeaningfulText(result.text)) {
+
+            // Spoken punctuation + whitespace cleanup before injection/history.
+            const std::string text = whisperflow::normalizeTranscript(result.text, dictionary_);
+            if (!whisperflow::isMeaningfulText(text)) {
                 message = "the recognizer heard no words";
                 return;
             }
 
-            injector_.inject(result.text, [&](const whisperflow::InjectionReport& report) {
+            injector_.inject(text, [&](const whisperflow::InjectionReport& report) {
                 if (!report.pasted) {
                     message = report.message;
                 }
@@ -670,7 +688,7 @@ private:
 
             {
                 std::lock_guard<std::mutex> lock(historyMutex_);
-                history_.add(result.text);
+                history_.add(text);
                 std::string historyError;
                 if (!history_.save(historyError) && !historyError.empty()) {
                     message = historyError;
@@ -761,12 +779,13 @@ private:
         // Snapshot the settings on the UI thread. The worker only reads these
         // locals so a concurrent menu action cannot race on settings_.
         const std::string language = settings_.language;
+        const std::string initialPrompt = settings_.initialPrompt;
         const int threads = settings_.threads;
         const bool useGpu = settings_.useGpu;
         const bool translate = settings_.translateToEnglish;
         const bool shrinkContext = settings_.shrinkContext;
 
-        modelWorker_ = std::thread([this, size, language, threads, useGpu, translate,
+        modelWorker_ = std::thread([this, size, language, initialPrompt, threads, useGpu, translate,
                                     shrinkContext] {
             whisperflow::ModelSize parsed{};
             if (!whisperflow::parseModelSize(size, parsed)) {
@@ -787,6 +806,7 @@ private:
             whisperflow::TranscriptionOptions options;
             options.modelPath = search.path;
             options.language = language;
+            options.initialPrompt = initialPrompt;
             options.threads = threads;
             options.useGpu = useGpu;
             options.translateToEnglish = translate;
@@ -871,6 +891,7 @@ private:
     std::filesystem::path settingsPath_;
     std::filesystem::path historyPath_;
     std::shared_ptr<whisperflow::Transcriber> transcriber_;
+    whisperflow::PunctuationDictionary dictionary_;
     whisperflow::AudioCapture capture_;
     whisperflow::HotkeyManager hotkey_;
     whisperflow::HotkeyCombination hotkeyCombination_{};
@@ -957,9 +978,16 @@ int main(int argc, char** argv) {
         return static_cast<int>(ExitCode::BadArguments);
     }
 
+    // Spoken-punctuation dictionary: <exe dir>/dictionary.json first, then next
+    // to settings.json; built-in defaults when neither exists or parses.
+    const whisperflow::PunctuationDictionary dictionary =
+        whisperflow::loadPunctuationDictionary({exeDir / "dictionary.json",
+            whisperflow::settingsFilePath(exeDir).parent_path() / "dictionary.json"});
+
     whisperflow::TranscriptionOptions options;
     options.modelPath = search.found ? search.path : std::filesystem::path();
     options.language = config.language;
+    options.initialPrompt = config.initialPrompt;
     options.threads = config.threads;
     options.useGpu = config.useGpu;
     options.translateToEnglish = config.translateToEnglish;
@@ -985,7 +1013,7 @@ int main(int argc, char** argv) {
             std::cerr << "[Config] --tray cannot be combined with --wav or --interactive.\n";
             return static_cast<int>(ExitCode::BadArguments);
         }
-        TrayApp app(std::move(transcriber), std::move(settings), exeDir);
+        TrayApp app(std::move(transcriber), std::move(settings), exeDir, dictionary);
         if (!app.start()) {
             std::cerr << "[Tray] Could not start the tray app.\n";
             return static_cast<int>(ExitCode::HotkeyFailed);
@@ -995,13 +1023,13 @@ int main(int argc, char** argv) {
     }
 
     if (!config.wavInput.empty()) {
-        return runFromWavFile(config, *transcriber);
+        return runFromWavFile(config, *transcriber, dictionary);
     }
     if (config.interactive) {
-        return runInteractive(config, *transcriber);
+        return runInteractive(config, *transcriber, dictionary);
     }
 
-    DictationApp app(config, *transcriber);
+    DictationApp app(config, *transcriber, dictionary);
     if (!app.start()) {
         return static_cast<int>(ExitCode::HotkeyFailed);
     }
@@ -1016,7 +1044,7 @@ int main(int argc, char** argv) {
         std::cerr << "This build has no microphone capture (non-Windows). Use --wav <file>.\n";
         return static_cast<int>(ExitCode::CaptureFailed);
     }
-    return runFromWavFile(config, *transcriber);
+    return runFromWavFile(config, *transcriber, dictionary);
 #endif
 }
 

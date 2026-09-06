@@ -262,10 +262,10 @@ private:
         appendItem(menu_, 0, "", false, true, true);
         appendItem(menu_, kCommandIdRepeat, "Repeat last insertion");
         appendItem(menu_, 0, "", false, true, true);
+        appendItem(menu_, kCommandIdLanguageRu, "Language: ru (default)",
+                   isCheckedCommand(kCommandIdLanguageRu, language_, model_));
         appendItem(menu_, kCommandIdLanguageAuto, "Language: auto",
                    isCheckedCommand(kCommandIdLanguageAuto, language_, model_));
-        appendItem(menu_, kCommandIdLanguageRu, "Language: ru",
-                   isCheckedCommand(kCommandIdLanguageRu, language_, model_));
         appendItem(menu_, kCommandIdLanguageEn, "Language: en",
                    isCheckedCommand(kCommandIdLanguageEn, language_, model_));
         appendItem(menu_, kCommandIdLanguageOther, "Language: other (set in settings.json)",

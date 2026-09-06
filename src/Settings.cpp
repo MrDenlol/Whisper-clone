@@ -298,6 +298,10 @@ void setTypedValue(Settings& settings, const std::string& key, const JsonValue& 
         if (asString(value, text)) {
             settings.language = text;
         }
+    } else if (key == "initial_prompt") {
+        if (asString(value, text)) {
+            settings.initialPrompt = text;
+        }
     } else if (key == "hotkey") {
         if (asString(value, text)) {
             if (parseHotkey(text).spec) {
@@ -515,6 +519,7 @@ bool saveSettings(const std::filesystem::path& path, const Settings& settings, s
     file << "{\n";
     file << "  \"model_name\": " << jsonString(settings.modelSize) << ",\n";
     file << "  \"language\": " << jsonString(settings.language) << ",\n";
+    file << "  \"initial_prompt\": " << jsonString(settings.initialPrompt) << ",\n";
     file << "  \"hotkey\": " << jsonString(settings.hotkey) << ",\n";
     file << "  \"threads\": " << settings.threads << ",\n";
     file << "  \"use_gpu\": " << (settings.useGpu ? "true" : "false") << ",\n";
@@ -538,6 +543,7 @@ void applySettingsToConfig(Settings& settings, AppConfig& config) {
         config.modelSize = size;
     }
     config.language = settings.language;
+    config.initialPrompt = settings.initialPrompt;
     config.hotkey = settings.hotkey;
     config.threads = settings.threads;
     config.useGpu = settings.useGpu;

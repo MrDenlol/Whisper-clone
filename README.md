@@ -20,7 +20,7 @@ Speech recognition runs **100% locally** with [whisper.cpp](https://github.com/g
 | Single-session guard — a second press cannot start a parallel session | ✅ done |
 | Latency: energy VAD trims silence + shrinks whisper's audio context for short clips | ✅ done |
 | Model discovery + config file + model downloader script | ✅ done |
-| Unit tests (70 cases) + CI on Windows and Linux | ✅ done |
+| Unit tests (81 cases) + CI on Windows and Linux | ✅ done |
 | Tray icon, settings.json UI, phrase history, autostart, hidden window (no console) | ✅ done |
 
 See [docs/STATUS.md](./docs/STATUS.md) for the detailed breakdown and the plan.
@@ -47,7 +47,7 @@ Output of a real run:
 === WhisperFlowClone - local offline speech-to-text ===
 whisper.cpp 1.9.3 | CPU : SSE3 = 1 | AVX = 1 | AVX2 = 1 | FMA = 1 | OPENMP = 1 | ...
 Model:      C:\Users\you\AppData\Local\WhisperFlowClone\models\ggml-small.bin
-Language:   auto
+Language:   ru
 Model load: 912 ms (warm)
 Press [Enter] to START recording...
 
@@ -115,7 +115,7 @@ truth. It shows a tray icon with:
 
 - **Status** (recorded / transcribed / error)
 - **Repeat last insertion** — re-pastes the most recent accepted phrase
-- **Language** — `auto` / `ru` / `en` (other codes stay editable in `settings.json`)
+- **Language** — `ru` (default) / `auto` / `en` (other codes stay editable in `settings.json`)
 - **Model** — `tiny` / `base` / `small` / `medium`; switching model reloads it
   without restarting the application
 - **Open models folder / Open settings file**
@@ -162,6 +162,74 @@ Search order used by the app (first hit wins):
 
 Check what is installed with `WhisperFlowClone.exe --list-models`.
 
+### Which model to pick
+
+| Model | Download | When to use |
+| :--- | :--- | :--- |
+| **small** | ~460 MB | **Recommended (and the default).** Good Russian accuracy with a live CPU response — the sweet spot for dictation and for the hackathon demo on a laptop. |
+| medium | ~1.4 GB | Noticeably better Russian, but slow on CPU. Use it when recording a demo/evaluations or when a GPU is available. |
+| base / tiny | ~140 / ~75 MB | Only for very weak hardware or quick smoke tests — Russian quality drops fast below small. |
+
+A GPU is **optional**: the CPU path (with VAD trimming + audio-context shrinking) already
+keeps `small` responsive for 2–5 s phrases. `use_gpu` / `--cpu` only matter if a GPU backend
+was compiled in.
+
+---
+
+
+## Punctuation and text quality
+
+Two layers keep the inserted text readable without a cloud API:
+
+**1. Decoder prompt (whisper).** Russian is the default language, and for `ru` the app feeds
+whisper an initial prompt that asks for literal transcription with proper Russian punctuation
+and capital letters and forbids describing non-speech sounds (no more `(кашель)`, `(музыка)`,
+`(аплодисменты)` in the output). `auto`/`en` get a neutral English wording so language
+detection is not biased. Along with the prompt the decoder runs with `suppress_blank`,
+`suppress_nst` and `no_speech_thold = 0.6`.
+
+Override the prompt when needed:
+
+```cmd
+WhisperFlowClone.exe --initial-prompt "Расставь запятые по правилам русского языка."
+```
+
+or in `settings.json` / `config.ini`:
+
+```json
+{ "initial_prompt": "Расставь запятые по правилам русского языка." }
+```
+
+An empty value keeps the built-in per-language default.
+
+**2. Text normalization before insertion** ([`src/TextNormalizer.cpp`](./src/TextNormalizer.cpp)).
+The transcript is cleaned up before it is printed/pasted/stored in the phrase history:
+
+- whitespace is trimmed and runs of spaces are collapsed;
+- a stray space before `,.;:!?) ] }` is removed (`Привет , как дела ?` → `Привет, как дела?`);
+- nothing is inserted and no characters are reordered, so `python3 script.py`,
+  `https://example.com/docs?lang=ru` and `localhost:3000` pass through untouched.
+
+**3. Offline spoken-punctuation dictionary** ([`dictionary.json`](./dictionary.json)).
+Phrases like «запятая» → `,` or «точка с запятой» → `;` are replaced before insertion.
+The file is plain JSON and safe to edit:
+
+```json
+{
+  "запятая": ",",
+  "точка с запятой": ";"
+}
+```
+
+Lookup order: `dictionary.json` next to the executable first, then next to `settings.json`
+(`%APPDATA%\WhisperFlowClone\dictionary.json`), then the built-in defaults. A missing or
+corrupt file never breaks dictation — the defaults take over.
+
+The normalization runs in every mode: `--wav`, `--interactive`, the background hotkey and
+`--tray`. Manual quality checklists for Russian live in
+[`tests/utterances_ru.txt`](./tests/utterances_ru.txt); the sine-wave unit test only verifies
+that the decoder pipeline runs, **not** ASR quality.
+
 ---
 
 ## Command line
@@ -173,7 +241,8 @@ Check what is installed with `WhisperFlowClone.exe --list-models`.
 | `--interactive` | console mode: `Enter` starts recording, `Enter` transcribes |
 | `--model <path>` | use this ggml model file |
 | `--model-name <name>` | `tiny` \| `base` \| `small` (default) \| `medium` |
-| `--language <code>` | `auto` (default), `ru`, `en`, `de`, ... |
+| `--language <code>` | `ru` (default), `auto`, `en`, `de`, ... |
+| `--initial-prompt <text>` | override the whisper quality prompt (default: built-in, per language) |
 | `--threads <n>` | inference threads, `0` = all logical cores (capped at 16) |
 | `--wav <file>` | transcribe a WAV file instead of the microphone (accuracy testing) |
 | `--save-wav <file>` | also dump the captured audio to a WAV file |
@@ -191,6 +260,7 @@ legacy CLI mode):
 model_name = small
 ; model_path = D:\models\ggml-small.bin
 language   = ru
+; initial_prompt = your own quality prompt (empty = built-in per-language default)
 threads    = 0
 use_gpu    = true
 translate  = false
@@ -205,7 +275,8 @@ the same values:
 ```json
 {
   "model_name": "small",
-  "language": "auto",
+  "language": "ru",
+  "initial_prompt": "",
   "hotkey": "ctrl+shift+space",
   "threads": 0,
   "use_gpu": true,
@@ -273,11 +344,12 @@ No `git submodule update --init` step to forget, no unpinned `main` branch.
 WhisperFlowClone/
 ├── assets/          # icons and visual assets
 ├── cmake/           # custom CMake modules
+├── dictionary.json  # editable spoken-punctuation dictionary (ru), optional
 ├── docs/            # STATUS.md, MODELS.md
-├── include/         # public headers: AudioCapture, Transcriber, ModelLocator, AppConfig, WavFile
+├── include/         # public headers: AudioCapture, Transcriber, TextNormalizer, AppConfig, ...
 ├── scripts/         # model downloaders (PowerShell / bash)
 ├── src/             # implementation
-├── tests/           # dependency-free unit tests
+├── tests/           # dependency-free unit tests + tests/utterances_ru.txt (manual quality run)
 ├── third_party/     # optional vendored dependencies (permissive licenses only)
 ├── .github/         # CI workflows
 ├── CMakeLists.txt

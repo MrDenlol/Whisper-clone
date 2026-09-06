@@ -13,11 +13,14 @@ namespace whisperflow {
 // header stays cheap to include and unit-testable.
 struct TranscriptionOptions {
     std::filesystem::path modelPath;
-    std::string language{"auto"};  // "auto" = detect, otherwise "ru", "en", ...
+    std::string language{"ru"};    // "ru" by default; "auto" enables detection
     int threads{0};                // 0 = all logical cores (capped)
     bool useGpu{true};             // ignored unless a GPU backend was compiled in
     bool translateToEnglish{false};
     bool singleSegment{false};
+    // Decoder prompt for punctuation/quality. Empty = the built-in per-language
+    // default (see defaultInitialPromptForLanguage); settings.json/CLI win.
+    std::string initialPrompt;
     // Shrink the encoder's audio context to fit the (already VAD-trimmed) clip.
     // The whisper encoder normally always processes a full 30 s mel window; for a
     // 2-5 s dictation that is wasted work. Reducing audio_ctx to the real length
@@ -28,13 +31,21 @@ struct TranscriptionOptions {
 // Options after defaults have been applied. Pure data, safe to assert on.
 struct ResolvedParams {
     int threads{4};
-    bool detectLanguage{true};
-    std::string language;  // used only when detectLanguage == false
+    bool detectLanguage{false};
+    std::string language;       // "ru" unless "auto"/empty was requested
     bool translate{false};
     bool singleSegment{false};
     bool useGpu{true};
     bool shrinkContextForShortAudio{true};
+    std::string initialPrompt;  // never empty: options prompt or the built-in default
 };
+
+// The built-in decoder prompt for a language. For "ru" it asks whisper for
+// literal Russian text with proper punctuation/capital letters and forbids
+// describing non-speech sounds (whisper tends to emit "(кашель)", "(музыка)"...).
+// For auto/en (and everything else) a neutral English wording is used so that
+// language detection is not biased. Exposed for unit testing.
+[[nodiscard]] std::string defaultInitialPromptForLanguage(const std::string& language);
 
 // Whisper's mel window is 30 s and the full audio context is 1500 frames. For a
 // clip shorter than 30 s we only need enough frames to cover it (2 mel frames per
