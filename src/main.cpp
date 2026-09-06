@@ -476,6 +476,8 @@ public:
           executableDirectory_(std::move(executableDirectory)),
           settingsPath_(whisperflow::settingsFilePath(executableDirectory_)),
           historyPath_(whisperflow::phraseHistoryFilePath(executableDirectory_)),
+          dictionaryPath_(whisperflow::settingsFilePath(executableDirectory_).parent_path() /
+                          "dictionary.json"),
           transcriber_(std::shared_ptr<whisperflow::Transcriber>(std::move(transcriber))),
           dictionary_(std::move(dictionary)),
           capture_([this](const std::vector<float>& chunk) { onAudioChunk(chunk); }) {}
@@ -591,6 +593,12 @@ private:
                 break;
             case whisperflow::TrayCommand::OpenSettingsFile:
                 openSettingsFile();
+                break;
+            case whisperflow::TrayCommand::EditDictionary:
+                editDictionary();
+                break;
+            case whisperflow::TrayCommand::ReloadDictionary:
+                reloadDictionary();
                 break;
             case whisperflow::TrayCommand::ToggleAutostart:
                 toggleAutostart();
@@ -863,6 +871,39 @@ private:
                       SW_SHOWNORMAL);
     }
 
+    // Opens dictionary.json in the user's editor, creating it from the current
+    // (built-in or loaded) dictionary first so there is always something to edit.
+    void editDictionary() {
+        std::error_code ec;
+        if (!std::filesystem::exists(dictionaryPath_, ec)) {
+            std::string error;
+            if (!whisperflow::writePunctuationDictionary(dictionaryPath_, dictionary_, error)) {
+                setStatus("Dictionary error: " + error);
+                return;
+            }
+        }
+        ShellExecuteW(nullptr, L"open", dictionaryPath_.wstring().c_str(), nullptr, nullptr,
+                      SW_SHOWNORMAL);
+        setStatus("Edit dictionary.json, then choose Reload dictionary");
+    }
+
+    // Re-reads the dictionary without restarting the app. A broken file keeps
+    // the dictionary that is currently in use: dictation must never break.
+    void reloadDictionary() {
+        whisperflow::PunctuationDictionary reloaded;
+        if (!whisperflow::readPunctuationDictionary(dictionaryPath_, reloaded) ||
+            reloaded.empty()) {
+            const std::filesystem::path portable = executableDirectory_ / "dictionary.json";
+            if (!whisperflow::readPunctuationDictionary(portable, reloaded) || reloaded.empty()) {
+                setStatus("Dictionary is missing or invalid - keeping the previous one");
+                tray_.showBalloon("Dictionary", "dictionary.json could not be parsed.");
+                return;
+            }
+        }
+        dictionary_ = std::move(reloaded);
+        setStatus("Dictionary reloaded (" + std::to_string(dictionary_.size()) + " entries)");
+    }
+
     void saveCurrentSettings() {
         std::string error;
         const bool saved = whisperflow::saveSettings(settingsPath_, settings_, error);
@@ -880,6 +921,7 @@ private:
     std::filesystem::path executableDirectory_;
     std::filesystem::path settingsPath_;
     std::filesystem::path historyPath_;
+    std::filesystem::path dictionaryPath_;
     std::shared_ptr<whisperflow::Transcriber> transcriber_;
     whisperflow::PunctuationDictionary dictionary_;
     whisperflow::AudioCapture capture_;

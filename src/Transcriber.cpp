@@ -94,9 +94,16 @@ std::string defaultInitialPromptForLanguage(const std::string& language) {
         // Russian dictation: literal transcription, proper Russian punctuation
         // and capital letters, and no non-speech annotations - whisper otherwise
         // loves writing things like "(кашель)" or "(аплодисменты)".
+        // The prompt doubles as a style sample: whisper conditions on it, so a
+        // short piece of correctly punctuated Russian is worth more than a list
+        // of instructions. Тire, ё and quotes are present on purpose.
         return "Дословная диктовка на русском языке. Расставляй правильные русские знаки "
-               "препинания и заглавные буквы. Не описывай неречевые звуки: кашель, шум, "
-               "музыку, аплодисменты.";
+               "препинания и заглавные буквы, пиши букву «ё» там, где она нужна. Не "
+               "описывай неречевые звуки: кашель, шум, музыку, аплодисменты. Не добавляй "
+               "ничего от себя: ни титров, ни благодарностей, ни «продолжение следует». "
+               "Латинские слова, команды и адреса пиши как есть: python3 script.py, "
+               "https://example.com, localhost:3000. Пример: «Привет, как дела? Завтра "
+               "встречаемся в три часа — не забудь документы».";
     }
     // auto / en / everything else: neutral English wording so that automatic
     // language detection is not biased towards Russian.
