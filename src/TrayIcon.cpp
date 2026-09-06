@@ -134,7 +134,6 @@ public:
     bool create(HWND owner, const std::string& tooltip) {
         owner_ = owner;
         tooltip_ = tooltip;
-        const HINSTANCE instance = GetModuleHandleW(nullptr);
 
         HICON icon = nullptr;
         if (const HMODULE module = GetModuleHandleW(nullptr)) {

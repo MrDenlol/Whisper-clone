@@ -461,7 +461,7 @@ public:
           executableDirectory_(std::move(executableDirectory)),
           settingsPath_(whisperflow::settingsFilePath(executableDirectory_)),
           historyPath_(whisperflow::phraseHistoryFilePath(executableDirectory_)),
-          transcriber_(std::move(transcriber)),
+          transcriber_(std::shared_ptr<whisperflow::Transcriber>(std::move(transcriber))),
           capture_([this](const std::vector<float>& chunk) { onAudioChunk(chunk); }) {}
 
     ~TrayApp() {
@@ -792,16 +792,16 @@ private:
             options.translateToEnglish = translate;
             options.shrinkContextForShortAudio = shrinkContext;
 
-            auto next = std::make_unique<whisperflow::Transcriber>(options);
+            auto next = std::make_shared<whisperflow::Transcriber>(options);
             const bool loaded = next->ensureLoaded();
             const std::string loadError = loaded ? std::string() : next->lastError();
-            postModelReady(size, std::move(next), loadError);
+            postModelReady(size, next, loadError);
         });
     }
 
-    void postModelReady(const std::string& size, std::unique_ptr<whisperflow::Transcriber> next,
+    void postModelReady(const std::string& size, std::shared_ptr<whisperflow::Transcriber> next,
                         const std::string& error) {
-        hotkey_.post([this, size, next = std::move(next), error] mutable {
+        hotkey_.post([this, size, next = std::move(next), error] {
             if (modelWorker_.joinable()) {
                 modelWorker_.join();
             }
@@ -814,7 +814,7 @@ private:
                 tray_.showBalloon("Model", "Could not load " + size + ": " + error);
                 return;
             }
-            transcriber_ = std::move(next);
+            transcriber_ = next;
             tray_.setModel(size);
             tray_.setLanguage(settings_.language);
             setStatus("Model " + size + " ready");
@@ -869,7 +869,7 @@ private:
     std::filesystem::path executableDirectory_;
     std::filesystem::path settingsPath_;
     std::filesystem::path historyPath_;
-    std::unique_ptr<whisperflow::Transcriber> transcriber_;
+    std::shared_ptr<whisperflow::Transcriber> transcriber_;
     whisperflow::AudioCapture capture_;
     whisperflow::HotkeyManager hotkey_;
     whisperflow::HotkeyCombination hotkeyCombination_{};

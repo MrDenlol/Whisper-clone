@@ -30,7 +30,9 @@ jobs:
         run: |
           $buildLog = cmake --build build --config Release 2>&1 | ForEach-Object { $_ }
           if ($LASTEXITCODE -ne 0) {
-            $errors = $buildLog | Where-Object { $_ -match '(^|[^a-z])(error|fatal error)[ :]|LNK[0-9]{4}' }
+            $errors = $buildLog | Where-Object {
+              $_.Contains('Whisper-clone\src') -or $_ -match '(^|[^a-z])(error|fatal error)[ :]|LNK[0-9]{4}'
+            }
             if ($errors) {
               $errors | Select-Object -First 100 | ForEach-Object { Write-Host "::error::$($_)" }
             } else {
