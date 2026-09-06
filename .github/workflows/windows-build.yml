@@ -30,7 +30,12 @@ jobs:
         run: |
           $buildLog = cmake --build build --config Release 2>&1 | ForEach-Object { $_ }
           if ($LASTEXITCODE -ne 0) {
-            $buildLog | Select-Object -First 160 | ForEach-Object { Write-Host "::error::$($_)" }
+            $errors = $buildLog | Where-Object { $_ -match '(^|[^a-z])error[ :]|LNK[0-9]{4}|C[0-9]{4}|fatal error' }
+            if ($errors) {
+              $errors | Select-Object -First 100 | ForEach-Object { Write-Host "::error::$($_)" }
+            } else {
+              $buildLog | Select-Object -Last 100 | ForEach-Object { Write-Host "::error::$($_)" }
+            }
             Write-Host "::error::Build failed with exit code $LASTEXITCODE"
             exit $LASTEXITCODE
           }
