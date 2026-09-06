@@ -10,6 +10,20 @@ namespace {
 const wchar_t* const kOverlayClassName = L"WhisperFlowClone.OverlayWindow";
 constexpr int kTextPadding = 18;
 constexpr int kCornerRadius = 14;
+
+std::wstring toWide(const std::string& text) {
+    if (text.empty()) {
+        return {};
+    }
+    const int length = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()),
+                                           nullptr, 0);
+    if (length <= 0) {
+        return {};
+    }
+    std::wstring out(static_cast<std::size_t>(length), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), length);
+    return out;
+}
 }
 
 class Overlay::Impl {
@@ -88,9 +102,9 @@ private:
         HDC dc = GetDC(nullptr);
         HFONT font = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
         const HGDIOBJ old = SelectObject(dc, font);
+        const std::wstring wide = toWide(text_);
         RECT rect{};
-        DrawTextW(dc, std::wstring(text_.begin(), text_.end()).c_str(), -1, &rect,
-                  DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+        DrawTextW(dc, wide.c_str(), -1, &rect, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
         SelectObject(dc, old);
         ReleaseDC(nullptr, dc);
 
@@ -124,8 +138,9 @@ private:
         SetTextColor(dc, RGB(255, 255, 255));
         HFONT font = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
         const HGDIOBJ oldFont = SelectObject(dc, font);
+        RECT textRect = rectForText();
         const std::string text = text_;
-        DrawTextA(dc, text.c_str(), -1, &rectForText(), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        DrawTextA(dc, text.c_str(), -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         SelectObject(dc, oldFont);
 
         EndPaint(hwnd_, &ps);

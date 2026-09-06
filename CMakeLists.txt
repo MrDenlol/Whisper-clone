@@ -165,6 +165,14 @@ if(WIN32)
     # The WinMain wrapper in main.cpp delegates to main() after UTF-8 argv conversion.
     set_target_properties(WhisperFlowClone PROPERTIES WIN32_EXECUTABLE TRUE)
 
+    # Generate the .rc in the build tree with an absolute path to the icon, so the
+    # resource compiler is never at the mercy of its working directory.
+    set(WHISPERFLOW_APP_ICO "${CMAKE_CURRENT_SOURCE_DIR}/assets/app.ico")
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/app.rc.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/app.rc"
+        @ONLY)
+
     # WASAPI microphone capture lives behind this flag so that the rest of the
     # pipeline (model lookup, inference, WAV input) stays buildable elsewhere.
     target_sources(WhisperFlowClone PRIVATE
@@ -172,7 +180,7 @@ if(WIN32)
         src/Hotkey.cpp
         src/Overlay.cpp
         src/TrayIcon.cpp
-        assets/app.rc
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/app.rc"
     )
     target_link_libraries(WhisperFlowClone PRIVATE ole32 uuid shell32)
     target_compile_definitions(WhisperFlowClone PRIVATE WHISPERFLOW_HAS_MICROPHONE=1)
