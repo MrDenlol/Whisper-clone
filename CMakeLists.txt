@@ -132,6 +132,7 @@ add_library(whisperflow_core STATIC
     src/SpeechGate.cpp
     src/TextInjector.cpp
     src/Transcriber.cpp
+    src/Vad.cpp
     src/WavFile.cpp
 )
 

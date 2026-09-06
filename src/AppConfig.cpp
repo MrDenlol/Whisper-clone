@@ -93,6 +93,20 @@ void applyKeyValue(AppConfig& config, const std::string& key, const std::string&
             return;
         }
         config.translateToEnglish = translate;
+    } else if (key == "vad") {
+        bool vad = true;
+        if (!parseBool(value, vad)) {
+            outError = "vad must be true or false, got '" + value + "'.";
+            return;
+        }
+        config.vad = vad;
+    } else if (key == "shrink_context") {
+        bool shrink = true;
+        if (!parseBool(value, shrink)) {
+            outError = "shrink_context must be true or false, got '" + value + "'.";
+            return;
+        }
+        config.shrinkContext = shrink;
     }
     // Unknown keys are ignored on purpose: a newer config file must not break an older build.
 }
@@ -175,6 +189,12 @@ AppConfig loadConfig(int argc, char** argv) {
             config.useGpu = false;
         } else if (arg == "--translate") {
             config.translateToEnglish = true;
+        } else if (arg == "--no-vad") {
+            config.vad = false;
+        } else if (arg == "--vad") {
+            config.vad = true;
+        } else if (arg == "--no-shrink-context") {
+            config.shrinkContext = false;
         } else if (arg == "--model" || arg == "--model-path") {
             if (!readNextValue(argc, argv, i, arg, value, config.error)) {
                 config.valid = false;
@@ -263,11 +283,14 @@ std::string usageText() {
     out << "  --save-wav <file>   also write the captured audio to this WAV file\n";
     out << "                      (microphone modes only)\n";
     out << "  --translate         translate the result to English\n";
+    out << "  --no-vad            do not trim leading/trailing silence before recognition\n";
+    out << "  --no-shrink-context keep whisper's full 30 s audio context (slower, short clips)\n";
     out << "  --cpu               do not use a GPU backend even if one is compiled in\n";
     out << "  --list-models       show where models are looked up and what is installed\n";
     out << "  --help              show this help\n\n";
     out << "Config file: " << configFilePath().string() << '\n';
-    out << "  model_path, model_name, language, hotkey, threads, use_gpu, translate\n\n";
+    out << "  model_path, model_name, language, hotkey, threads, use_gpu, translate, vad,\n";
+    out << "  shrink_context\n\n";
     out << "Models are not part of the repository. Default location:\n";
     out << "  " << userModelsDirectory().string() << "\\ggml-small.bin\n";
     out << "Download one with: scripts\\download-model.ps1 -Model small\n";

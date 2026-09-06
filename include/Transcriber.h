@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -17,6 +18,11 @@ struct TranscriptionOptions {
     bool useGpu{true};             // ignored unless a GPU backend was compiled in
     bool translateToEnglish{false};
     bool singleSegment{false};
+    // Shrink the encoder's audio context to fit the (already VAD-trimmed) clip.
+    // The whisper encoder normally always processes a full 30 s mel window; for a
+    // 2-5 s dictation that is wasted work. Reducing audio_ctx to the real length
+    // is the single biggest CPU latency win for short utterances. On by default.
+    bool shrinkContextForShortAudio{true};
 };
 
 // Options after defaults have been applied. Pure data, safe to assert on.
@@ -27,15 +33,24 @@ struct ResolvedParams {
     bool translate{false};
     bool singleSegment{false};
     bool useGpu{true};
+    bool shrinkContextForShortAudio{true};
 };
+
+// Whisper's mel window is 30 s and the full audio context is 1500 frames. For a
+// clip shorter than 30 s we only need enough frames to cover it (2 mel frames per
+// 20 ms hop), rounded up with slack. Returns 0 to mean "use the default context".
+// Exposed for unit testing.
+[[nodiscard]] int audioContextForSamples(std::size_t numSamples, int sampleRate);
 
 struct TranscriptionResult {
     bool ok{false};
     std::string text;
     std::string error;
     double modelLoadMs{0.0};   // 0 when the model was already warm
-    double inferenceMs{0.0};
-    double audioSeconds{0.0};
+    double inferenceMs{0.0};   // wall-clock time of whisper_full()
+    double encodeMs{0.0};      // encoder time reported by whisper.cpp
+    double decodeMs{0.0};      // decoder (+ sampling) time reported by whisper.cpp
+    double audioSeconds{0.0};  // duration actually fed to the model (after VAD trim)
     std::string modelPath;
     std::string language;      // language actually used for this utterance
 };

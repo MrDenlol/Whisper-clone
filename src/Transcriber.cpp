@@ -77,7 +77,32 @@ ResolvedParams resolveParams(const TranscriptionOptions& options) {
     resolved.translate = options.translateToEnglish;
     resolved.singleSegment = options.singleSegment;
     resolved.useGpu = options.useGpu;
+    resolved.shrinkContextForShortAudio = options.shrinkContextForShortAudio;
     return resolved;
+}
+
+int audioContextForSamples(std::size_t numSamples, int sampleRate) {
+    constexpr int kFullAudioCtx = 1500;   // encoder frames for the full 30 s window
+    constexpr int kHopLength = 160;       // WHISPER_HOP_LENGTH: samples per mel frame
+    constexpr int kFramesPerCtx = 2;      // the encoder downsamples mel by 2
+
+    const int rate = (sampleRate > 0) ? sampleRate : 16000;
+    if (numSamples == 0) {
+        return 0;
+    }
+
+    // Mel frames needed to cover the audio, then encoder context frames, + slack.
+    const double seconds = static_cast<double>(numSamples) / static_cast<double>(rate);
+    const double melFrames = seconds * static_cast<double>(rate) / static_cast<double>(kHopLength);
+    int ctx = static_cast<int>(melFrames / kFramesPerCtx) + 16;  // round up + headroom
+
+    if (ctx >= kFullAudioCtx) {
+        return 0;  // audio is >= 30 s: keep the default, do not clamp
+    }
+    if (ctx < 32) {
+        ctx = 32;  // a sane floor so very short clips still decode
+    }
+    return ctx;
 }
 
 class Transcriber::Impl {
@@ -180,10 +205,29 @@ public:
         params.language = language.empty() ? "auto" : language.c_str();
         params.detect_language = false;
 
+        // For a short clip, shrink the encoder's audio context so it does not
+        // process the full 30 s mel window. This is the main latency win for
+        // 2-5 s dictation. audio_ctx == 0 keeps whisper's default (full window).
+        if (resolved.shrinkContextForShortAudio) {
+            params.audio_ctx = audioContextForSamples(pcmMono16k.size(), kSampleRate);
+        }
+
+        // whisper accumulates timings in the context; reset so encode/decode
+        // reflect only this utterance.
+        whisper_reset_timings(context_);
+
         const auto start = Clock::now();
         const int status = whisper_full(context_, params, pcmMono16k.data(),
                                         static_cast<int>(pcmMono16k.size()));
         result.inferenceMs = msSince(start);
+
+        if (const whisper_timings* timings = whisper_get_timings(context_)) {
+            result.encodeMs = static_cast<double>(timings->encode_ms);
+            result.decodeMs = static_cast<double>(timings->decode_ms) +
+                              static_cast<double>(timings->sample_ms) +
+                              static_cast<double>(timings->batchd_ms) +
+                              static_cast<double>(timings->prompt_ms);
+        }
 
         if (status != 0) {
             result.error = "whisper_full failed with status " + std::to_string(status) + ".";

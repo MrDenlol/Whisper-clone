@@ -45,6 +45,29 @@ WF_TEST(Transcriber_resolvesDefaultParams) {
     WF_CHECK(!resolved.translate);
     WF_CHECK(!resolved.singleSegment);
     WF_CHECK(resolved.useGpu);
+    WF_CHECK(resolved.shrinkContextForShortAudio);
+}
+
+WF_TEST(Transcriber_audioContextShrinksForShortClips) {
+    // 30 s or longer -> 0 (use whisper's default full context).
+    WF_CHECK_EQ(whisperflow::audioContextForSamples(30 * 16000, 16000), 0);
+    WF_CHECK_EQ(whisperflow::audioContextForSamples(45 * 16000, 16000), 0);
+
+    // A 3 s clip needs far fewer than the full 1500 context frames.
+    const int ctx3s = whisperflow::audioContextForSamples(3 * 16000, 16000);
+    WF_CHECK(ctx3s > 0);
+    WF_CHECK(ctx3s < 1500);
+
+    // Longer clip -> larger context than a shorter one (monotonic).
+    const int ctx6s = whisperflow::audioContextForSamples(6 * 16000, 16000);
+    WF_CHECK(ctx6s > ctx3s);
+
+    // Empty audio -> 0 (nothing to size for).
+    WF_CHECK_EQ(whisperflow::audioContextForSamples(0, 16000), 0);
+
+    // A tiny clip is floored to a decodable minimum, never absurdly small.
+    const int ctxTiny = whisperflow::audioContextForSamples(1000, 16000);
+    WF_CHECK(ctxTiny >= 32);
 }
 
 WF_TEST(Transcriber_resolvesExplicitParams) {
