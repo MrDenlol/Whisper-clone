@@ -52,3 +52,8 @@ Desktop.ini
 # Runtime state generated next to the executable / in %APPDATA% (never commit)
 settings.json
 phrase_history.json
+
+# Release packaging output (cmake --install / scripts/package_release.ps1)
+/dist/
+/dist-*/
+*.zip

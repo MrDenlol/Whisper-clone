@@ -11,6 +11,7 @@
 #include "WavFile.h"
 
 #include <chrono>
+#include <cstdio>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -192,7 +193,7 @@ int listInstalledModels(const whisperflow::ModelQuery& query) {
     }
 
     if (!anyFound) {
-        std::cout << "\nNothing installed yet. Run: scripts\\download-model.ps1 -Model small\n";
+        std::cout << "\nNothing installed yet. Run: scripts\\download_model.ps1 -Model small\n";
     }
     return static_cast<int>(ExitCode::Ok);
 }
@@ -550,9 +551,12 @@ public:
         hotkey_.stopMessageLoop();
     }
 
-private:
-    enum class UiState { Idle, Recording, Transcribing, LoadingModel, Error };
+    // Why start() failed, in user-facing words (hotkey taken, tray icon refused...).
+    [[nodiscard]] const std::string& startupError() const noexcept {
+        return trayStatus_;
+    }
 
+private:
     void onCommand(whisperflow::TrayCommand command) {
         switch (command) {
             case whisperflow::TrayCommand::RepeatLast:
@@ -611,16 +615,13 @@ private:
         }
 
         pcm_.clear();
-        captureStart_ = Clock::now();
         capture_.startRecording();
-        state_ = UiState::Recording;
         overlay_.show("Listening...");
         setStatus("Recording...");
     }
 
     void onHotkeyReleased() {
         capture_.stopRecording();
-        const double captureMs = msSince(captureStart_);
         std::vector<float> buffer = pcm_.take();
 
         const whisperflow::SpeechVerdict verdict = whisperflow::evaluateSpeech(
@@ -639,28 +640,27 @@ private:
             return;
         }
 
+        overlay_.show("Transcribing...");
+        setStatus("Transcribing...");
+
+        // The previous worker already finished (the guard was idle); reap it so
+        // that assigning a new thread never hits a joinable std::thread.
         if (worker_.joinable()) {
             worker_.join();
         }
-        worker_ = std::thread(&TrayApp::transcribeAndInject, this, std::move(buffer), captureMs);
+        worker_ = std::thread(&TrayApp::transcribeAndInject, this, std::move(buffer));
     }
 
-    void transcribeAndInject(std::vector<float> buffer, double captureMs) {
-        const double originalSeconds =
-            static_cast<double>(buffer.size()) / whisperflow::Transcriber::kSampleRate;
-
-        whisperflow::VadResult vad;
+    void transcribeAndInject(std::vector<float> buffer) {
         if (settings_.vad) {
-            vad = whisperflow::detectSpeech(buffer, whisperflow::Transcriber::kSampleRate,
-                                            vadSettings_);
+            const whisperflow::VadResult vad = whisperflow::detectSpeech(
+                buffer, whisperflow::Transcriber::kSampleRate, vadSettings_);
             if (vad.hasSpeech) {
                 buffer = std::vector<float>(
                     buffer.begin() + static_cast<std::ptrdiff_t>(vad.startSample),
                     buffer.begin() + static_cast<std::ptrdiff_t>(vad.endSample));
             }
         }
-        const double keptSeconds =
-            static_cast<double>(buffer.size()) / whisperflow::Transcriber::kSampleRate;
 
         std::string message;
         bool ok = false;
@@ -697,17 +697,9 @@ private:
             ok = true;
         });
 
-        const double vadTrimMs = 0.0;  // only used for the console build's detailed log
-        (void)vadTrimMs;
-        (void)captureMs;
-        (void)originalSeconds;
-        (void)keptSeconds;
-        (void)vad;
-
         hotkey_.post([this, ok, message] {
             guard_.finish();
             overlay_.hide();
-            state_ = UiState::Idle;
             if (ok) {
                 setStatus("Inserted");
             } else {
@@ -772,7 +764,6 @@ private:
         settings_.modelSize = size;
         saveCurrentSettings();
         tray_.setModel(size);
-        state_ = UiState::LoadingModel;
         overlay_.show("Loading " + size + "...");
         setStatus("Loading " + size + "...");
 
@@ -828,7 +819,6 @@ private:
             loadingModel_ = false;
             guard_.finish();
             overlay_.hide();
-            state_ = UiState::Idle;
             if (!error.empty()) {
                 setStatus("Error: " + error);
                 tray_.showBalloon("Model", "Could not load " + size + ": " + error);
@@ -905,11 +895,9 @@ private:
     std::mutex historyMutex_;
 
     whisperflow::AudioBuffer pcm_;
-    Clock::time_point captureStart_{};
     std::thread worker_;
     std::thread modelWorker_;
     bool loadingModel_{false};
-    UiState state_{UiState::Idle};
     std::string trayStatus_{"Waiting for hotkey..."};
 };
 
@@ -1015,7 +1003,14 @@ int main(int argc, char** argv) {
         }
         TrayApp app(std::move(transcriber), std::move(settings), exeDir, dictionary);
         if (!app.start()) {
-            std::cerr << "[Tray] Could not start the tray app.\n";
+            // No console in tray mode: a message box is the only feedback channel.
+            const std::string message = "WhisperFlowClone could not start: " + app.startupError() +
+                                        "\n\nEdit settings.json (hotkey) and try again.";
+            std::cerr << "[Tray] " << message << '\n';
+            const int wide = MultiByteToWideChar(CP_UTF8, 0, message.c_str(), -1, nullptr, 0);
+            std::wstring wmessage(static_cast<std::size_t>(wide > 0 ? wide : 1), L'\0');
+            MultiByteToWideChar(CP_UTF8, 0, message.c_str(), -1, wmessage.data(), wide);
+            MessageBoxW(nullptr, wmessage.c_str(), L"WhisperFlowClone", MB_OK | MB_ICONERROR);
             return static_cast<int>(ExitCode::HotkeyFailed);
         }
         app.run();
@@ -1050,10 +1045,35 @@ int main(int argc, char** argv) {
 
 #if defined(_WIN32) && defined(WHISPERFLOW_HAS_MICROPHONE)
 
+namespace {
+
+// The executable is a Windows-subsystem binary (no console of its own) so that
+// --tray and autostart never flash a console window. When it is launched from
+// cmd.exe / PowerShell, reattach to that console so --help, --list-models,
+// --interactive and the log lines are visible. Returns false when there is no
+// parent console (double-click, autostart, Task Scheduler).
+bool attachParentConsole() {
+    if (!AttachConsole(ATTACH_PARENT_PROCESS)) {
+        return false;
+    }
+    FILE* stream = nullptr;
+    (void)freopen_s(&stream, "CONOUT$", "w", stdout);
+    (void)freopen_s(&stream, "CONOUT$", "w", stderr);
+    (void)freopen_s(&stream, "CONIN$", "r", stdin);
+    std::cout.clear();
+    std::cerr.clear();
+    std::cin.clear();
+    return true;
+}
+
+}  // namespace
+
 // CMake builds this target as a Windows-subsystem executable, so the CRT calls
 // WinMain instead of main. Rebuild the UTF-8 argv and delegate to main() so the
 // rest of the application is not duplicated.
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
+    const bool hasConsole = attachParentConsole();
+
     int argc = 0;
     LPWSTR* rawArgs = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (rawArgs == nullptr) {
@@ -1061,8 +1081,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     }
     std::vector<std::string> utf8Args;
     std::vector<char*> argv;
-    utf8Args.reserve(static_cast<std::size_t>(argc));
-    argv.reserve(static_cast<std::size_t>(argc));
+    utf8Args.reserve(static_cast<std::size_t>(argc) + 1);
+    argv.reserve(static_cast<std::size_t>(argc) + 1);
     for (int i = 0; i < argc; ++i) {
         const int length = WideCharToMultiByte(CP_UTF8, 0, rawArgs[i], -1, nullptr, 0, nullptr,
                                                nullptr);
@@ -1072,10 +1092,19 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             WideCharToMultiByte(CP_UTF8, 0, rawArgs[i], -1, arg.data(), length, nullptr, nullptr);
         }
         utf8Args.push_back(std::move(arg));
-        argv.push_back(utf8Args.back().data());
     }
     LocalFree(rawArgs);
-    return main(argc, argv.data());
+
+    // Double-click / autostart without arguments: there is no console to log to,
+    // so the tray UI is the only mode that gives the user any feedback or a way
+    // to exit. Explicit arguments are always respected as typed.
+    if (!hasConsole && argc == 1) {
+        utf8Args.emplace_back("--tray");
+    }
+    for (std::string& arg : utf8Args) {
+        argv.push_back(arg.data());
+    }
+    return main(static_cast<int>(argv.size()), argv.data());
 }
 
 #endif  // _WIN32 && WHISPERFLOW_HAS_MICROPHONE

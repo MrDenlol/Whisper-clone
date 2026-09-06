@@ -6,13 +6,23 @@ namespace whisperflow {
 namespace {
 
 std::string quoteWindowsPath(const std::filesystem::path& path) {
-    return "\"" + path.string() + "\"";
+    // Built with explicit appends rather than `"..." + std::string&& + "..."`:
+    // GCC 12 at -O3 raises a bogus -Werror=restrict on that expression (PR 105329).
+    std::string quoted;
+    const std::string native = path.string();
+    quoted.reserve(native.size() + 2);
+    quoted.push_back('"');
+    quoted.append(native);
+    quoted.push_back('"');
+    return quoted;
 }
 
 }  // namespace
 
 std::string autostartCommand(const std::filesystem::path& executablePath) {
-    return quoteWindowsPath(executablePath) + " --tray";
+    std::string command = quoteWindowsPath(executablePath);
+    command.append(" --tray");
+    return command;
 }
 
 #if defined(_WIN32)

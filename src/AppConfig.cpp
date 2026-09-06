@@ -307,7 +307,7 @@ std::string usageText() {
     out << "  translate, vad, shrink_context\n\n";
     out << "Models are not part of the repository. Default location:\n";
     out << "  " << userModelsDirectory().string() << "\\ggml-small.bin\n";
-    out << "Download one with: scripts\\download-model.ps1 -Model small\n";
+    out << "Download one with: scripts\\download_model.ps1 -Model small\n";
     return out.str();
 }
 

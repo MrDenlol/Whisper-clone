@@ -166,7 +166,7 @@ std::string describeMissingModel(const ModelSearch& search) {
     out << "No ggml model file found (looked for '" << search.expectedFileName << "').\n";
     out << "Models are NOT stored in git. Download one and put it in the models folder:\n\n";
     out << "  PowerShell (downloads ggml-small.bin into %LOCALAPPDATA%\\WhisperFlowClone\\models):\n";
-    out << "    .\\scripts\\download-model.ps1 -Model small\n\n";
+    out << "    .\\scripts\\download_model.ps1 -Model small\n\n";
     out << "  Or manually, from https://huggingface.co/ggerganov/whisper.cpp/tree/main :\n";
     for (const std::filesystem::path& candidate : search.searchedPaths) {
         out << "    " << candidate.string() << '\n';

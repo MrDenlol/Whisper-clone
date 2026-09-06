@@ -75,7 +75,7 @@ WF_TEST(ModelLocator_reportsMissingModelWithGuidance) {
 
     const std::string message = whisperflow::describeMissingModel(search);
     WF_CHECK(message.find("ggml-base.bin") != std::string::npos);
-    WF_CHECK(message.find("download-model.ps1") != std::string::npos);
+    WF_CHECK(message.find("download_model.ps1") != std::string::npos);
 }
 
 WF_TEST(ModelLocator_defaultDirectoriesIncludeLocalAppDataLayout) {
