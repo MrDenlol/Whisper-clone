@@ -45,7 +45,8 @@ public:
             windowClass.cbSize = sizeof(windowClass);
             windowClass.lpfnWndProc = &Impl::windowProc;
             windowClass.hInstance = instance;
-            windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+            windowClass.hCursor =
+                LoadCursorW(nullptr, reinterpret_cast<LPCWSTR>(IDC_ARROW));
             windowClass.hbrBackground = static_cast<HBRUSH>(GetStockObject(NULL_BRUSH));
             windowClass.lpszClassName = kOverlayClassName;
             if (RegisterClassExW(&windowClass) == 0) {

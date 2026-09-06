@@ -457,11 +457,12 @@ class TrayApp {
 public:
     TrayApp(std::unique_ptr<whisperflow::Transcriber> transcriber, whisperflow::Settings settings,
             std::filesystem::path executableDirectory)
-        : transcriber_(std::move(transcriber)),
-          settings_(std::move(settings)),
+        : settings_(std::move(settings)),
           executableDirectory_(std::move(executableDirectory)),
           settingsPath_(whisperflow::settingsFilePath(executableDirectory_)),
-          historyPath_(whisperflow::phraseHistoryFilePath(executableDirectory_)) {}
+          historyPath_(whisperflow::phraseHistoryFilePath(executableDirectory_)),
+          transcriber_(std::move(transcriber)),
+          capture_([this](const std::vector<float>& chunk) { onAudioChunk(chunk); }) {}
 
     ~TrayApp() {
         if (modelWorker_.joinable()) {
@@ -476,6 +477,10 @@ public:
 
     TrayApp(const TrayApp&) = delete;
     TrayApp& operator=(const TrayApp&) = delete;
+
+    void onAudioChunk(const std::vector<float>& chunk) {
+        pcm_.append(chunk);
+    }
 
     bool start() {
         history_.load(historyPath_);
@@ -796,7 +801,7 @@ private:
 
     void postModelReady(const std::string& size, std::unique_ptr<whisperflow::Transcriber> next,
                         const std::string& error) {
-        hotkey_.post([this, size, next = std::move(next), error] {
+        hotkey_.post([this, size, next = std::move(next), error] mutable {
             if (modelWorker_.joinable()) {
                 modelWorker_.join();
             }

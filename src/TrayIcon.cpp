@@ -141,7 +141,8 @@ public:
             icon = LoadIconW(module, MAKEINTRESOURCEW(101));
         }
         if (icon == nullptr) {
-            icon = LoadIconW(nullptr, IDI_APPLICATION);
+            // IDI_APPLICATION/text macros are ANSI (LPSTR); LoadIconW needs LPCWSTR.
+            icon = LoadIconW(nullptr, reinterpret_cast<LPCWSTR>(IDI_APPLICATION));
         }
         icon_ = icon;
 
