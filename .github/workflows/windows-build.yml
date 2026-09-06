@@ -26,7 +26,14 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DWHISPERFLOW_BUILD_TESTS=ON
 
       - name: Build Project
-        run: cmake --build build --config Release
+        shell: pwsh
+        run: |
+          $buildLog = cmake --build build --config Release 2>&1 | ForEach-Object { $_ }
+          if ($LASTEXITCODE -ne 0) {
+            $buildLog | Select-Object -First 160 | ForEach-Object { Write-Host "::error::$($_)" }
+            Write-Host "::error::Build failed with exit code $LASTEXITCODE"
+            exit $LASTEXITCODE
+          }
 
       - name: Run unit tests
         run: ctest --test-dir build -C Release --output-on-failure
