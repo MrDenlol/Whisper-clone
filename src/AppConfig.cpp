@@ -65,6 +65,8 @@ void applyKeyValue(AppConfig& config, const std::string& key, const std::string&
         config.modelSize = size;
     } else if (key == "language") {
         config.language = value;
+    } else if (key == "initial_prompt") {
+        config.initialPrompt = value;
     } else if (key == "hotkey") {
         const auto parsed = parseHotkey(value);
         if (!parsed.spec) {
@@ -221,6 +223,12 @@ AppConfig loadConfig(int argc, char** argv) {
                 return config;
             }
             config.language = value;
+        } else if (arg == "--initial-prompt") {
+            if (!readNextValue(argc, argv, i, arg, value, config.error)) {
+                config.valid = false;
+                return config;
+            }
+            config.initialPrompt = value;
         } else if (arg == "--hotkey") {
             if (!readNextValue(argc, argv, i, arg, value, config.error)) {
                 config.valid = false;
@@ -277,7 +285,10 @@ std::string usageText() {
     out << "  --interactive       console mode: Enter starts recording, Enter transcribes\n";
     out << "  --model <path>      use this ggml model file\n";
     out << "  --model-name <name> tiny | base | small (default) | medium\n";
-    out << "  --language <code>   auto (default), ru, en, de, ...\n";
+    out << "  --language <code>   ru (default), auto, en, de, ...\n";
+    out << "  --initial-prompt <text>\n";
+    out << "                      override the whisper quality prompt; the default asks\n";
+    out << "                      for correct punctuation and no non-speech annotations\n";
     out << "  --hotkey <combo>    push-to-talk keys, default " << kDefaultHotkey << '\n';
     out << "                      e.g. ctrl+shift+space, ctrl+alt+space, f9\n";
     out << "                      (Win-based combos usually fail: Windows reserves them)\n";
@@ -292,8 +303,8 @@ std::string usageText() {
     out << "  --list-models       show where models are looked up and what is installed\n";
     out << "  --help              show this help\n\n";
     out << "Config file: " << configFilePath().string() << '\n';
-    out << "  model_path, model_name, language, hotkey, threads, use_gpu, translate, vad,\n";
-    out << "  shrink_context\n\n";
+    out << "  model_path, model_name, language, initial_prompt, hotkey, threads, use_gpu,\n";
+    out << "  translate, vad, shrink_context\n\n";
     out << "Models are not part of the repository. Default location:\n";
     out << "  " << userModelsDirectory().string() << "\\ggml-small.bin\n";
     out << "Download one with: scripts\\download-model.ps1 -Model small\n";

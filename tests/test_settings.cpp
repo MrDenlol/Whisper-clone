@@ -19,6 +19,7 @@ whisperflow::Settings sampleSettings() {
     settings.shrinkContext = false;
     settings.startWithWindows = true;
     settings.maxHistoryEntries = 42;
+    settings.initialPrompt = "Расставляй знаки препинания.";
     return settings;
 }
 
@@ -27,7 +28,9 @@ whisperflow::Settings sampleSettings() {
 WF_TEST(SettingsDefaultsAreSane) {
     const whisperflow::Settings settings;
     WF_CHECK_EQ(settings.modelSize, std::string("small"));
-    WF_CHECK_EQ(settings.language, std::string("auto"));
+    // Russian is the default; "auto" stays available via settings.json/CLI.
+    WF_CHECK_EQ(settings.language, std::string("ru"));
+    WF_CHECK_EQ(settings.initialPrompt, std::string());  // empty = built-in prompt
     WF_CHECK_EQ(settings.hotkey, std::string(whisperflow::kDefaultHotkey));
     WF_CHECK_EQ(settings.threads, 0);
     WF_CHECK(settings.useGpu);
@@ -42,10 +45,11 @@ WF_TEST(SettingsJsonRoundTrip) {
     whisperflow::Settings parsed;
     std::string json;
     // Duplicate keys must not defeat the last-wins semantics.
-    json = R"({"model_name":"base","language":"de","hotkey":"ctrl+alt+f9","threads":6,"use_gpu":false,"translate":true,"vad":false,"shrink_context":false,"start_with_windows":true,"max_history_entries":42})";
+    json = R"({"model_name":"base","language":"de","initial_prompt":"Пиши кратко.","hotkey":"ctrl+alt+f9","threads":6,"use_gpu":false,"translate":true,"vad":false,"shrink_context":false,"start_with_windows":true,"max_history_entries":42})";
     WF_CHECK(whisperflow::parseSettingsJson(json, parsed));
     WF_CHECK_EQ(parsed.modelSize, std::string("base"));
     WF_CHECK_EQ(parsed.language, std::string("de"));
+    WF_CHECK_EQ(parsed.initialPrompt, std::string("Пиши кратко."));
     WF_CHECK_EQ(parsed.hotkey, std::string("ctrl+alt+f9"));
     WF_CHECK_EQ(parsed.threads, 6);
     WF_CHECK(!parsed.useGpu);
@@ -92,7 +96,7 @@ WF_TEST(SettingsInvalidValuesAreIgnored) {
     WF_CHECK(whisperflow::parseSettingsJson(json, parsed));
     WF_CHECK_EQ(parsed.modelSize, std::string("small"));
     WF_CHECK_EQ(parsed.threads, 0);
-    WF_CHECK_EQ(parsed.language, std::string("auto"));
+    WF_CHECK_EQ(parsed.language, std::string("ru"));
     WF_CHECK_EQ(parsed.hotkey, std::string(whisperflow::kDefaultHotkey));
 }
 
@@ -108,6 +112,7 @@ WF_TEST(SettingsSaveAndLoadFile) {
     const whisperflow::Settings loaded = whisperflow::loadSettings(file);
     WF_CHECK_EQ(loaded.modelSize, saved.modelSize);
     WF_CHECK_EQ(loaded.language, saved.language);
+    WF_CHECK_EQ(loaded.initialPrompt, saved.initialPrompt);
     WF_CHECK_EQ(loaded.hotkey, saved.hotkey);
     WF_CHECK_EQ(loaded.threads, saved.threads);
     WF_CHECK_EQ(loaded.useGpu, saved.useGpu);
@@ -136,6 +141,7 @@ WF_TEST(SettingsApplyToConfig) {
     whisperflow::Settings mutableSettings = settings;
     whisperflow::applySettingsToConfig(mutableSettings, config);
     WF_CHECK_EQ(config.language, std::string("de"));
+    WF_CHECK_EQ(config.initialPrompt, std::string("Расставляй знаки препинания."));
     WF_CHECK_EQ(config.hotkey, std::string("ctrl+alt+f9"));
     WF_CHECK_EQ(config.threads, 6);
     WF_CHECK(!config.useGpu);

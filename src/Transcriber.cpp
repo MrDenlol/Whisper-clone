@@ -78,7 +78,31 @@ ResolvedParams resolveParams(const TranscriptionOptions& options) {
     resolved.singleSegment = options.singleSegment;
     resolved.useGpu = options.useGpu;
     resolved.shrinkContextForShortAudio = options.shrinkContextForShortAudio;
+
+    // An explicit prompt (settings.json / --initial-prompt) wins; otherwise the
+    // built-in per-language prompt is used so punctuation quality is not left
+    // to chance.
+    resolved.initialPrompt = trim(options.initialPrompt);
+    if (resolved.initialPrompt.empty()) {
+        resolved.initialPrompt = defaultInitialPromptForLanguage(resolved.language);
+    }
     return resolved;
+}
+
+std::string defaultInitialPromptForLanguage(const std::string& language) {
+    if (toLower(trim(language)) == "ru") {
+        // Russian dictation: literal transcription, proper Russian punctuation
+        // and capital letters, and no non-speech annotations - whisper otherwise
+        // loves writing things like "(кашель)" or "(аплодисменты)".
+        return "Дословная диктовка на русском языке. Расставляй правильные русские знаки "
+               "препинания и заглавные буквы. Не описывай неречевые звуки: кашель, шум, "
+               "музыку, аплодисменты.";
+    }
+    // auto / en / everything else: neutral English wording so that automatic
+    // language detection is not biased towards Russian.
+    return "Live speech dictation. Transcribe exactly what is said with correct "
+           "punctuation and capitalization. Do not describe non-speech sounds such as "
+           "coughs, background noise, music or applause.";
 }
 
 int audioContextForSamples(std::size_t numSamples, int sampleRate) {
@@ -215,6 +239,15 @@ public:
         params.print_special = false;
         params.language = language.empty() ? "auto" : language.c_str();
         params.detect_language = false;
+
+        // Quality prompts: push whisper towards proper punctuation/caps and
+        // away from annotating non-speech sounds. carry_initial_prompt keeps
+        // the prompt active for every segment, not only the first one.
+        params.initial_prompt = resolved.initialPrompt.c_str();
+        params.carry_initial_prompt = true;
+        params.suppress_blank = true;   // no empty/"..." outputs
+        params.suppress_nst = true;     // no "(тип стучит по клавиатуре)" style tokens
+        params.no_speech_thold = 0.6f;  // drop segments whisper itself flags as no-speech
 
         // For a short clip, shrink the encoder's audio context so it does not
         // process the full 30 s mel window. This is the main latency win for

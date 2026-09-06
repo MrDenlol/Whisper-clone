@@ -134,6 +134,7 @@ add_library(whisperflow_core STATIC
     src/Settings.cpp
     src/SpeechGate.cpp
     src/TextInjector.cpp
+    src/TextNormalizer.cpp
     src/Transcriber.cpp
     src/Vad.cpp
     src/WavFile.cpp

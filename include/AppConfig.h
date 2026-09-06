@@ -12,7 +12,8 @@ namespace whisperflow {
 struct AppConfig {
     ModelSize modelSize{ModelSize::Small};
     std::filesystem::path modelPath;        // optional explicit ggml file
-    std::string language{"auto"};           // "auto" = detect, or "ru", "en", ...
+    std::string language{"ru"};             // "ru" by default; "auto" = detect
+    std::string initialPrompt;              // empty = built-in per-language prompt
     int threads{0};                         // 0 = all logical cores
     bool useGpu{true};                      // only used if a GPU backend is compiled in
     bool translateToEnglish{false};

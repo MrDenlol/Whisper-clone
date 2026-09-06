@@ -40,12 +40,49 @@ WF_TEST(Transcriber_resolvesDefaultParams) {
 
     WF_CHECK(resolved.threads > 0);
     WF_CHECK(resolved.threads <= 16);
-    WF_CHECK(resolved.detectLanguage);
-    WF_CHECK(resolved.language.empty());
+    // Russian is the default language; detection is opt-in via "auto".
+    WF_CHECK(!resolved.detectLanguage);
+    WF_CHECK_EQ(resolved.language, std::string("ru"));
     WF_CHECK(!resolved.translate);
     WF_CHECK(!resolved.singleSegment);
     WF_CHECK(resolved.useGpu);
     WF_CHECK(resolved.shrinkContextForShortAudio);
+    // A quality prompt is always present: the built-in one unless overridden.
+    WF_CHECK(!resolved.initialPrompt.empty());
+    WF_CHECK_EQ(resolved.initialPrompt,
+                whisperflow::defaultInitialPromptForLanguage("ru"));
+}
+
+WF_TEST(Transcriber_buildsLanguageSpecificPrompts) {
+    const std::string ruPrompt = whisperflow::defaultInitialPromptForLanguage("ru");
+    const std::string neutralPrompt = whisperflow::defaultInitialPromptForLanguage("auto");
+    const std::string emptyPrompt = whisperflow::defaultInitialPromptForLanguage("");
+
+    // The Russian prompt is written in Russian and asks for punctuation while
+    // forbidding non-speech annotations.
+    WF_CHECK(ruPrompt.find("знаки препинания") != std::string::npos);
+    WF_CHECK(ruPrompt.find("аплодисменты") != std::string::npos);
+    // auto/empty use the neutral (English) wording, distinct from the ru one.
+    WF_CHECK(!neutralPrompt.empty());
+    WF_CHECK_EQ(neutralPrompt, emptyPrompt);
+    WF_CHECK(neutralPrompt != ruPrompt);
+    WF_CHECK(neutralPrompt.find("punctuation") != std::string::npos);
+
+    // "auto" keeps language detection on but still resolves a prompt.
+    whisperflow::TranscriptionOptions options;
+    options.language = " auto ";
+    const whisperflow::ResolvedParams resolved = whisperflow::resolveParams(options);
+    WF_CHECK(resolved.detectLanguage);
+    WF_CHECK(resolved.language.empty());
+    WF_CHECK_EQ(resolved.initialPrompt, neutralPrompt);
+}
+
+WF_TEST(Transcriber_explicitPromptOverridesTheDefault) {
+    whisperflow::TranscriptionOptions options;
+    options.initialPrompt = "Расставляй запятые строго по правилам.";
+    const whisperflow::ResolvedParams resolved = whisperflow::resolveParams(options);
+
+    WF_CHECK_EQ(resolved.initialPrompt, std::string("Расставляй запятые строго по правилам."));
 }
 
 WF_TEST(Transcriber_audioContextShrinksForShortClips) {
@@ -146,9 +183,11 @@ WF_TEST(Transcriber_rejectsEmptyAudioBuffer) {
     WF_CHECK(captured.error.find("empty") != std::string::npos);
 }
 
-// Opt-in end-to-end check: set WHISPERFLOW_TEST_MODEL to a real ggml model to
-// exercise the full decode path. Not required for a normal build.
-WF_TEST(Transcriber_endToEndWhenModelProvided) {
+// Opt-in decoder smoke test: set WHISPERFLOW_TEST_MODEL to a real ggml model to
+// exercise the full decode path. A sine wave contains no speech, so this only
+// proves the pipeline runs end to end - it is NOT an ASR quality test. Manual
+// quality checks live in tests/utterances_ru.txt.
+WF_TEST(Transcriber_decoderSmokeTestWhenModelProvided) {
     const char* modelPath = envOrNull("WHISPERFLOW_TEST_MODEL");
     if (modelPath == nullptr || std::string(modelPath).empty()) {
         std::cout << "  (skipped: set WHISPERFLOW_TEST_MODEL to run this case)\n";

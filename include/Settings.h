@@ -11,7 +11,8 @@ namespace whisperflow {
 // Purely local JSON (no third-party JSON library), kept small and dependency-free.
 struct Settings {
     std::string modelSize{"small"};       // tiny | base | small | medium
-    std::string language{"auto"};         // auto | ru | en | de | ...
+    std::string language{"ru"};           // ru (default) | auto | en | de | ...
+    std::string initialPrompt;            // empty = built-in per-language whisper prompt
     std::string hotkey{kDefaultHotkey};   // parsed by parseHotkey()
     int threads{0};                       // 0 = all logical cores
     bool useGpu{true};                    // used only if a GPU backend is compiled in
