@@ -1,6 +1,9 @@
 #include "AppConfig.h"
+#include "Autostart.h"
 #include "ModelLocator.h"
+#include "PhraseHistory.h"
 #include "SessionGuard.h"
+#include "Settings.h"
 #include "SpeechGate.h"
 #include "Transcriber.h"
 #include "Vad.h"
@@ -9,6 +12,7 @@
 #include <chrono>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -20,12 +24,15 @@
 #include "AudioBuffer.h"
 #include "AudioCapture.h"
 #include "Hotkey.h"
+#include "Overlay.h"
 #include "TextInjector.h"
+#include "TrayIcon.h"
 #endif
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <shellapi.h>
 #endif
 
 namespace {
@@ -444,6 +451,447 @@ int runInteractive(const whisperflow::AppConfig& config, whisperflow::Transcribe
     return transcribeBuffer(std::move(recorded), captureMs, transcriber, config.language);
 }
 
+// Tray build: no console, settings.json is the source of truth, the hidden window
+// also owns Shell_NotifyIcon and the hotkey message loop.
+class TrayApp {
+public:
+    TrayApp(std::unique_ptr<whisperflow::Transcriber> transcriber, whisperflow::Settings settings,
+            std::filesystem::path executableDirectory)
+        : settings_(std::move(settings)),
+          executableDirectory_(std::move(executableDirectory)),
+          settingsPath_(whisperflow::settingsFilePath(executableDirectory_)),
+          historyPath_(whisperflow::phraseHistoryFilePath(executableDirectory_)),
+          transcriber_(std::shared_ptr<whisperflow::Transcriber>(std::move(transcriber))),
+          capture_([this](const std::vector<float>& chunk) { onAudioChunk(chunk); }) {}
+
+    ~TrayApp() {
+        if (modelWorker_.joinable()) {
+            modelWorker_.join();
+        }
+        if (worker_.joinable()) {
+            worker_.join();
+        }
+        tray_.destroy();
+        overlay_.destroy();
+    }
+
+    TrayApp(const TrayApp&) = delete;
+    TrayApp& operator=(const TrayApp&) = delete;
+
+    void onAudioChunk(const std::vector<float>& chunk) {
+        pcm_.append(chunk);
+    }
+
+    bool start() {
+        history_.load(historyPath_);
+        history_.setMaxEntries(settings_.maxHistoryEntries);
+
+        hotkey_.setErrorHandler([this](const std::string& message) {
+            setStatus("Hotkey error: " + message);
+        });
+
+        const auto parsed = whisperflow::parseHotkey(settings_.hotkey);
+        if (!parsed.spec) {
+            trayStatus_ = "Hotkey config error: " + parsed.error;
+            return false;
+        }
+        const auto combination = whisperflow::toCombination(*parsed.spec);
+        if (!combination) {
+            trayStatus_ = "Hotkey config error";
+            return false;
+        }
+        hotkeyCombination_ = *combination;
+
+        if (!hotkey_.registerPushToTalk(
+                hotkeyCombination_, [this] { onHotkeyPressed(); },
+                [this] { onHotkeyReleased(); })) {
+            trayStatus_ = "Hotkey is already registered by another app";
+            return false;
+        }
+
+        hotkey_.setUserMessageHandler([this](UINT message, WPARAM wParam, LPARAM lParam) {
+            return tray_.handleMessage(message, wParam, lParam);
+        });
+
+        if (!tray_.create(hotkey_.nativeHandle(), "WhisperFlowClone")) {
+            trayStatus_ = "Could not create the tray icon";
+            return false;
+        }
+        tray_.setCommandHandler([this](whisperflow::TrayCommand command) { onCommand(command); });
+        tray_.setLanguage(settings_.language);
+        tray_.setModel(settings_.modelSize);
+        tray_.setAutostartEnabled(whisperflow::isAutostartEnabled());
+        overlay_.create();
+
+        tray_.setStatus(trayStatus_);
+        return true;
+    }
+
+    void run() {
+        hotkey_.runMessageLoop();
+    }
+
+    void stop() {
+        hotkey_.stopMessageLoop();
+    }
+
+private:
+    enum class UiState { Idle, Recording, Transcribing, LoadingModel, Error };
+
+    void onCommand(whisperflow::TrayCommand command) {
+        switch (command) {
+            case whisperflow::TrayCommand::RepeatLast:
+                repeatLast();
+                break;
+            case whisperflow::TrayCommand::LanguageAuto:
+                switchLanguage("auto");
+                break;
+            case whisperflow::TrayCommand::LanguageRu:
+                switchLanguage("ru");
+                break;
+            case whisperflow::TrayCommand::LanguageEn:
+                switchLanguage("en");
+                break;
+            case whisperflow::TrayCommand::LanguageOther:
+                setStatus("Set the language in settings.json");
+                break;
+            case whisperflow::TrayCommand::ModelTiny:
+                switchModel("tiny");
+                break;
+            case whisperflow::TrayCommand::ModelBase:
+                switchModel("base");
+                break;
+            case whisperflow::TrayCommand::ModelSmall:
+                switchModel("small");
+                break;
+            case whisperflow::TrayCommand::ModelMedium:
+                switchModel("medium");
+                break;
+            case whisperflow::TrayCommand::OpenModelsFolder:
+                openModelsFolder();
+                break;
+            case whisperflow::TrayCommand::OpenSettingsFile:
+                openSettingsFile();
+                break;
+            case whisperflow::TrayCommand::ToggleAutostart:
+                toggleAutostart();
+                break;
+            case whisperflow::TrayCommand::Exit:
+                stop();
+                break;
+        }
+    }
+
+    void onHotkeyPressed() {
+        if (!guard_.beginRecording()) {
+            setStatus("Busy: " + guard_.busyMessage());
+            return;
+        }
+        if (!transcriber_ || !transcriber_->isLoaded()) {
+            setStatus("Model is not loaded - open the models folder");
+            tray_.showBalloon("Model", "Choose a model from the tray menu or download one first.");
+            overlay_.hide();
+            guard_.finish();
+            return;
+        }
+
+        pcm_.clear();
+        captureStart_ = Clock::now();
+        capture_.startRecording();
+        state_ = UiState::Recording;
+        overlay_.show("Listening...");
+        setStatus("Recording...");
+    }
+
+    void onHotkeyReleased() {
+        capture_.stopRecording();
+        const double captureMs = msSince(captureStart_);
+        std::vector<float> buffer = pcm_.take();
+
+        const whisperflow::SpeechVerdict verdict = whisperflow::evaluateSpeech(
+            buffer, whisperflow::Transcriber::kSampleRate, gate_);
+
+        if (!verdict.acceptable) {
+            overlay_.hide();
+            setStatus("Skipped (" + verdict.reason + ")");
+            guard_.finish();
+            return;
+        }
+
+        if (!guard_.beginTranscribing()) {
+            overlay_.hide();
+            guard_.finish();
+            return;
+        }
+
+        if (worker_.joinable()) {
+            worker_.join();
+        }
+        worker_ = std::thread(&TrayApp::transcribeAndInject, this, std::move(buffer), captureMs);
+    }
+
+    void transcribeAndInject(std::vector<float> buffer, double captureMs) {
+        const double originalSeconds =
+            static_cast<double>(buffer.size()) / whisperflow::Transcriber::kSampleRate;
+
+        whisperflow::VadResult vad;
+        if (settings_.vad) {
+            vad = whisperflow::detectSpeech(buffer, whisperflow::Transcriber::kSampleRate,
+                                            vadSettings_);
+            if (vad.hasSpeech) {
+                buffer = std::vector<float>(
+                    buffer.begin() + static_cast<std::ptrdiff_t>(vad.startSample),
+                    buffer.begin() + static_cast<std::ptrdiff_t>(vad.endSample));
+            }
+        }
+        const double keptSeconds =
+            static_cast<double>(buffer.size()) / whisperflow::Transcriber::kSampleRate;
+
+        std::string message;
+        bool ok = false;
+        transcriber_->transcribe(buffer, [&](const whisperflow::TranscriptionResult& result) {
+            if (!result.ok) {
+                message = result.error;
+                return;
+            }
+            if (!whisperflow::isMeaningfulText(result.text)) {
+                message = "the recognizer heard no words";
+                return;
+            }
+
+            injector_.inject(result.text, [&](const whisperflow::InjectionReport& report) {
+                if (!report.pasted) {
+                    message = report.message;
+                }
+            });
+            if (!message.empty()) {
+                return;
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(historyMutex_);
+                history_.add(result.text);
+                std::string historyError;
+                if (!history_.save(historyError) && !historyError.empty()) {
+                    message = historyError;
+                }
+            }
+            ok = true;
+        });
+
+        const double vadTrimMs = 0.0;  // only used for the console build's detailed log
+        (void)vadTrimMs;
+        (void)captureMs;
+        (void)originalSeconds;
+        (void)keptSeconds;
+        (void)vad;
+
+        hotkey_.post([this, ok, message] {
+            guard_.finish();
+            overlay_.hide();
+            state_ = UiState::Idle;
+            if (ok) {
+                setStatus("Inserted");
+            } else {
+                setStatus("Error: " + message);
+            }
+        });
+    }
+
+    void repeatLast() {
+        if (!guard_.isIdle()) {
+            setStatus("Busy");
+            return;
+        }
+        std::string phrase;
+        {
+            std::lock_guard<std::mutex> lock(historyMutex_);
+            phrase = history_.last();
+        }
+        if (phrase.empty()) {
+            setStatus("Phrase history is empty");
+            tray_.showBalloon("Phrase history", "There is no phrase to repeat yet.");
+            return;
+        }
+
+        injector_.inject(phrase, [this](const whisperflow::InjectionReport& report) {
+            if (report.pasted) {
+                setStatus("Repeated last phrase");
+            } else {
+                setStatus("Repeat failed: " + report.message);
+            }
+        });
+    }
+
+    void switchLanguage(const std::string& language) {
+        if (language == settings_.language) {
+            return;
+        }
+        settings_.language = language;
+        saveCurrentSettings();
+        if (transcriber_) {
+            transcriber_->setLanguage(language);
+        }
+        tray_.setLanguage(language);
+        setStatus("Language: " + language);
+    }
+
+    void switchModel(const std::string& size) {
+        if (!guard_.isIdle()) {
+            setStatus("Busy - cannot switch model now");
+            return;
+        }
+        if (modelWorker_.joinable() || loadingModel_) {
+            setStatus("Model is already loading");
+            return;
+        }
+        if (size == settings_.modelSize && transcriber_ && transcriber_->isLoaded()) {
+            return;
+        }
+
+        loadingModel_ = true;
+        guard_.beginRecording();  // keep the hotkey path out while the model swaps
+        settings_.modelSize = size;
+        saveCurrentSettings();
+        tray_.setModel(size);
+        state_ = UiState::LoadingModel;
+        overlay_.show("Loading " + size + "...");
+        setStatus("Loading " + size + "...");
+
+        // Snapshot the settings on the UI thread. The worker only reads these
+        // locals so a concurrent menu action cannot race on settings_.
+        const std::string language = settings_.language;
+        const int threads = settings_.threads;
+        const bool useGpu = settings_.useGpu;
+        const bool translate = settings_.translateToEnglish;
+        const bool shrinkContext = settings_.shrinkContext;
+
+        modelWorker_ = std::thread([this, size, language, threads, useGpu, translate,
+                                    shrinkContext] {
+            whisperflow::ModelSize parsed{};
+            if (!whisperflow::parseModelSize(size, parsed)) {
+                postModelReady(size, nullptr, "unknown model size");
+                return;
+            }
+
+            whisperflow::ModelQuery query;
+            query.size = parsed;
+            query.executableDirectory = executableDirectory_;
+            const whisperflow::ModelSearch search = whisperflow::locateModel(query);
+            if (!search.found) {
+                const std::string message = "model " + size + " is not installed";
+                postModelReady(size, nullptr, message);
+                return;
+            }
+
+            whisperflow::TranscriptionOptions options;
+            options.modelPath = search.path;
+            options.language = language;
+            options.threads = threads;
+            options.useGpu = useGpu;
+            options.translateToEnglish = translate;
+            options.shrinkContextForShortAudio = shrinkContext;
+
+            auto next = std::make_shared<whisperflow::Transcriber>(options);
+            const bool loaded = next->ensureLoaded();
+            const std::string loadError = loaded ? std::string() : next->lastError();
+            postModelReady(size, next, loadError);
+        });
+    }
+
+    void postModelReady(const std::string& size, std::shared_ptr<whisperflow::Transcriber> next,
+                        const std::string& error) {
+        hotkey_.post([this, size, next = std::move(next), error] {
+            if (modelWorker_.joinable()) {
+                modelWorker_.join();
+            }
+            loadingModel_ = false;
+            guard_.finish();
+            overlay_.hide();
+            state_ = UiState::Idle;
+            if (!error.empty()) {
+                setStatus("Error: " + error);
+                tray_.showBalloon("Model", "Could not load " + size + ": " + error);
+                return;
+            }
+            transcriber_ = next;
+            tray_.setModel(size);
+            tray_.setLanguage(settings_.language);
+            setStatus("Model " + size + " ready");
+            tray_.showBalloon("Model", "Loaded " + size);
+        });
+    }
+
+    void toggleAutostart() {
+        const bool enabled = !whisperflow::isAutostartEnabled();
+        std::string error;
+        if (!whisperflow::setAutostartEnabled(enabled, error)) {
+            setStatus("Autostart error: " + error);
+            return;
+        }
+        settings_.startWithWindows = enabled;
+        saveCurrentSettings();
+        tray_.setAutostartEnabled(enabled);
+        setStatus(enabled ? "Autostart enabled" : "Autostart disabled");
+    }
+
+    void openModelsFolder() const {
+        const std::filesystem::path dir = whisperflow::userModelsDirectory();
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        ShellExecuteW(nullptr, L"open", dir.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    }
+
+    void openSettingsFile() {
+        std::error_code existsError;
+        if (!std::filesystem::exists(settingsPath_, existsError)) {
+            std::string error;
+            const bool saved = whisperflow::saveSettings(settingsPath_, settings_, error);
+            (void)saved;
+        }
+        ShellExecuteW(nullptr, L"open", settingsPath_.wstring().c_str(), nullptr, nullptr,
+                      SW_SHOWNORMAL);
+    }
+
+    void saveCurrentSettings() {
+        std::string error;
+        const bool saved = whisperflow::saveSettings(settingsPath_, settings_, error);
+        if (!saved || !error.empty()) {
+            setStatus("Settings save error: " + error);
+        }
+    }
+
+    void setStatus(const std::string& text) {
+        trayStatus_ = text;
+        tray_.setStatus(text);
+    }
+
+    whisperflow::Settings settings_;
+    std::filesystem::path executableDirectory_;
+    std::filesystem::path settingsPath_;
+    std::filesystem::path historyPath_;
+    std::shared_ptr<whisperflow::Transcriber> transcriber_;
+    whisperflow::AudioCapture capture_;
+    whisperflow::HotkeyManager hotkey_;
+    whisperflow::HotkeyCombination hotkeyCombination_{};
+    whisperflow::TextInjector injector_;
+    whisperflow::SessionGuard guard_;
+    whisperflow::SpeechGateSettings gate_;
+    whisperflow::VadSettings vadSettings_;
+    whisperflow::Overlay overlay_;
+    whisperflow::TrayIcon tray_;
+    whisperflow::PhraseHistory history_;
+    std::mutex historyMutex_;
+
+    whisperflow::AudioBuffer pcm_;
+    Clock::time_point captureStart_{};
+    std::thread worker_;
+    std::thread modelWorker_;
+    bool loadingModel_{false};
+    UiState state_{UiState::Idle};
+    std::string trayStatus_{"Waiting for hotkey..."};
+};
+
 #endif  // WHISPERFLOW_HAS_MICROPHONE
 
 }  // namespace
@@ -453,7 +901,7 @@ int main(int argc, char** argv) {
     SetConsoleOutputCP(CP_UTF8);
 #endif
 
-    const whisperflow::AppConfig config = whisperflow::loadConfig(argc, argv);
+    whisperflow::AppConfig config = whisperflow::loadConfig(argc, argv);
     if (!config.valid) {
         std::cerr << config.error << "\n\n" << whisperflow::usageText();
         return static_cast<int>(ExitCode::BadArguments);
@@ -472,16 +920,35 @@ int main(int argc, char** argv) {
         return listInstalledModels(query);
     }
 
+    const std::filesystem::path exeDir = executableDirectory();
+    whisperflow::Settings settings = whisperflow::loadSettings(
+        whisperflow::settingsFilePath(exeDir));
+
+    // --tray treats settings.json as the source of truth; the other mode keeps
+    // the legacy config.ini + CLI behaviour unchanged.
+    if (config.trayMode) {
+        whisperflow::applySettingsToConfig(settings, config);
+        // Rebuild the model query because --tray may have changed the size/hotkey
+        // from settings.json after the query was initialized above.
+        query.size = config.modelSize;
+        query.explicitPath = config.modelPath;
+        query.executableDirectory = exeDir;
+    }
+
     std::cout << "=== WhisperFlowClone - local offline speech-to-text ===\n";
     std::cout << "whisper.cpp " << whisperflow::Transcriber::version() << " | "
               << whisperflow::Transcriber::backendInfo() << '\n';
 
     const whisperflow::ModelSearch search = whisperflow::locateModel(query);
-    if (!search.found) {
+    if (!search.found && !config.trayMode) {
         std::cerr << '\n' << whisperflow::describeMissingModel(search) << '\n';
         return static_cast<int>(ExitCode::ModelMissing);
     }
-    std::cout << "Model:      " << search.path.string() << '\n';
+    if (search.found) {
+        std::cout << "Model:      " << search.path.string() << '\n';
+    } else if (config.trayMode) {
+        std::cout << "Model:      (not installed - the tray app will keep running)\n";
+    }
     std::cout << "Language:   " << config.language << '\n';
 
     if (!whisperflow::Transcriber::isKnownLanguage(config.language)) {
@@ -491,44 +958,96 @@ int main(int argc, char** argv) {
     }
 
     whisperflow::TranscriptionOptions options;
-    options.modelPath = search.path;
+    options.modelPath = search.found ? search.path : std::filesystem::path();
     options.language = config.language;
     options.threads = config.threads;
     options.useGpu = config.useGpu;
     options.translateToEnglish = config.translateToEnglish;
     options.shrinkContextForShortAudio = config.shrinkContext;
 
-    whisperflow::Transcriber transcriber(options);
-    transcriber.setLogHandler([](const std::string& line) {
+    auto transcriber = std::make_unique<whisperflow::Transcriber>(options);
+    transcriber->setLogHandler([](const std::string& line) {
         std::cerr << "[whisper] " << line << '\n';
     });
 
     const auto loadStart = Clock::now();
-    if (!transcriber.ensureLoaded()) {
-        std::cerr << "[Transcriber] " << transcriber.lastError() << '\n';
+    if (search.found && !transcriber->ensureLoaded()) {
+        std::cerr << "[Transcriber] " << transcriber->lastError() << '\n';
         return static_cast<int>(ExitCode::TranscriptionFailed);
     }
-    std::cout << "Model load: " << static_cast<long long>(msSince(loadStart)) << " ms (warm)\n";
+    if (search.found) {
+        std::cout << "Model load: " << static_cast<long long>(msSince(loadStart)) << " ms (warm)\n";
+    }
 
 #if defined(WHISPERFLOW_HAS_MICROPHONE)
-    if (!config.wavInput.empty()) {
-        return runFromWavFile(config, transcriber);
-    }
-    if (config.interactive) {
-        return runInteractive(config, transcriber);
+    if (config.trayMode) {
+        if (!config.wavInput.empty() || config.interactive) {
+            std::cerr << "[Config] --tray cannot be combined with --wav or --interactive.\n";
+            return static_cast<int>(ExitCode::BadArguments);
+        }
+        TrayApp app(std::move(transcriber), std::move(settings), exeDir);
+        if (!app.start()) {
+            std::cerr << "[Tray] Could not start the tray app.\n";
+            return static_cast<int>(ExitCode::HotkeyFailed);
+        }
+        app.run();
+        return static_cast<int>(ExitCode::Ok);
     }
 
-    DictationApp app(config, transcriber);
+    if (!config.wavInput.empty()) {
+        return runFromWavFile(config, *transcriber);
+    }
+    if (config.interactive) {
+        return runInteractive(config, *transcriber);
+    }
+
+    DictationApp app(config, *transcriber);
     if (!app.start()) {
         return static_cast<int>(ExitCode::HotkeyFailed);
     }
     app.run();
     return static_cast<int>(ExitCode::Ok);
 #else
+    if (config.trayMode) {
+        std::cerr << "[Config] --tray is only available in the Windows build.\n";
+        return static_cast<int>(ExitCode::BadArguments);
+    }
     if (config.wavInput.empty()) {
         std::cerr << "This build has no microphone capture (non-Windows). Use --wav <file>.\n";
         return static_cast<int>(ExitCode::CaptureFailed);
     }
-    return runFromWavFile(config, transcriber);
+    return runFromWavFile(config, *transcriber);
 #endif
 }
+
+#if defined(_WIN32) && defined(WHISPERFLOW_HAS_MICROPHONE)
+
+// CMake builds this target as a Windows-subsystem executable, so the CRT calls
+// WinMain instead of main. Rebuild the UTF-8 argv and delegate to main() so the
+// rest of the application is not duplicated.
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
+    int argc = 0;
+    LPWSTR* rawArgs = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (rawArgs == nullptr) {
+        return static_cast<int>(ExitCode::CaptureFailed);
+    }
+    std::vector<std::string> utf8Args;
+    std::vector<char*> argv;
+    utf8Args.reserve(static_cast<std::size_t>(argc));
+    argv.reserve(static_cast<std::size_t>(argc));
+    for (int i = 0; i < argc; ++i) {
+        const int length = WideCharToMultiByte(CP_UTF8, 0, rawArgs[i], -1, nullptr, 0, nullptr,
+                                               nullptr);
+        std::string arg;
+        if (length > 1) {
+            arg.resize(static_cast<std::size_t>(length - 1));
+            WideCharToMultiByte(CP_UTF8, 0, rawArgs[i], -1, arg.data(), length, nullptr, nullptr);
+        }
+        utf8Args.push_back(std::move(arg));
+        argv.push_back(utf8Args.back().data());
+    }
+    LocalFree(rawArgs);
+    return main(argc, argv.data());
+}
+
+#endif  // _WIN32 && WHISPERFLOW_HAS_MICROPHONE

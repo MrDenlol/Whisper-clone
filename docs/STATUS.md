@@ -1,7 +1,7 @@
 # Статус проекта и план работ
 
-Обновлено после шага «hotkey + вставка». Все утверждения ниже сверены с кодом и с прогонами,
-которые реально выполнялись (команды указаны).
+Обновлено после шага «трей + settings.json + история + autostart». Все утверждения ниже сверены
+с кодом и с прогонами, которые реально выполнялись (команды указаны).
 
 ## Готовность по слоям
 
@@ -12,7 +12,24 @@
 | 3. Локальное распознавание (whisper.cpp v1.9.3, MIT) | ✅ | `src/Transcriber.cpp`; запуск `WhisperFlowClone` печатает `whisper.cpp 1.9.3` и список CPU-фич ggml |
 | 4. Продукт: хоткей, вставка, защита сессии, фильтр тишины | ✅ | `src/Hotkey.cpp`, `src/TextInjector.cpp`, `include/SessionGuard.h`, `src/SpeechGate.cpp` |
 | 5. Скорость: VAD-обрезка тишины, сжатие `audio_ctx`, потокобезопасный аккумулятор, тайминги | ✅ | `src/Vad.cpp`, `include/AudioBuffer.h`, `audioContextForSamples()` в `src/Transcriber.cpp` |
-| 6. Продукт: трей, окно настроек, скрытое окно (без консоли) | ⏳ | — |
+| 6. Продукт: трей, settings.json, история фраз, автозапуск, скрытое окно (без консоли) | ✅ | `src/TrayIcon.cpp`, `src/Overlay.cpp`, `src/Settings.cpp`, `src/PhraseHistory.cpp`, `src/Autostart.cpp`, `--tray` в `src/main.cpp` |
+
+## Слой 6: трей-режим
+
+`WhisperFlowClone --tray` поднимает общий `Win32` message loop, в котором живут:
+- **трей** (`src/TrayIcon.cpp`): статус, Repeat last insertion, Language `auto/ru/en`, Model
+  `tiny/base/small/medium`, Open models folder, Open settings file, Start with Windows (check),
+  Exit. `Shell_NotifyIconW` без внешних зависимостей.
+- **оверлей** (`src/Overlay.cpp`): пилюля `Listening…` / `Transcribing…` с
+  `WS_EX_NOACTIVATE` — не крадёт фокус у целевого окна.
+- **settings.json** (`src/Settings.cpp`): мини-JSON парсер без сторонних библиотек; портативный
+  `settings.json` рядом с exe приоритетнее `%APPDATA%\WhisperFlowClone\settings.json`;
+  битый/частичный файл не мешает запуску (дефолты).
+- **история фраз** (`src/PhraseHistory.cpp`): ограниченная, локальная (`phrase_history.json`),
+  дедуп повтора, экранирование переводов строк — питает Repeat last insertion.
+- **автозапуск** (`src/Autostart.cpp`): честный `HKCU\…\CurrentVersion\Run`, команда
+  `"<exe>" --tray`.
+- **иконка**: собственный MIT-ресурс `assets/app.ico` (id 101), без стоковых/чужих ассетов.
 
 ## Скорость отклика (шаг «VAD + стриминг чанков»)
 
@@ -59,15 +76,16 @@
 
 ```
 g++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -Iinclude -fsyntax-only <каждый src/*.cpp>
-g++ ... tests/test_*.cpp src/{AppConfig,ModelLocator,SpeechGate,WavFile,HotkeySpec,TextInjector}.cpp \
+g++ ... tests/test_*.cpp src/{AppConfig,Autostart,ModelLocator,PhraseHistory,Settings,SpeechGate,WavFile,HotkeySpec,TextInjector}.cpp \
     -o wftests && ./wftests
-→ 37/37 test cases passed   (44 в проекте; 7 из них в `test_transcriber.cpp`, нужен `whisper.h`)
+→ 62/62 test cases passed   (70 в проекте; 8 из них в `test_transcriber.cpp`, нужен `whisper.h`)
 ```
 
 Эти прогоны покрывают `SpeechGate`, `SessionGuard`, `ModelLocator`, `AppConfig`, `HotkeySpec`,
-`WavFile` и Linux-ветку `TextInjector`.
+`Settings`, `PhraseHistory`, `Autostart` (командная строка) и Linux-ветку `TextInjector`.
 Они **не** покрывают `Transcriber.cpp` (нужен `whisper.h`) и Win32-модули `Hotkey`/`TextInjector`/
 `AudioCapture` (нужен `windows.h`) — их компилирует CI на `windows-latest` с `/W4 /WX`.
+Win32-часть `TrayIcon`/`Overlay`/autostart-реестр собирается только Windows-джобом CI.
 
 Локальный прогон уже поймал две настоящие ошибки, которые иначе уехали бы в репозиторий:
 неиспользуемый параметр в Linux-ветке `TextInjector::inject` (`-Werror`) и
@@ -107,7 +125,7 @@ CI только компилирует: ни микрофона, ни аудио
 
 1. **Точность**: ФНЧ перед децимацией (или ресемплер средствами WASAPI) + прогон на эталонных WAV.
 2. **Скорость**: стриминговый/частичный инференс, прогрев контекста, метрики hotkey→текст.
-3. **Продукт**: `WIN32`-подсистема без консоли + трей-иконка, окно настроек (модель, язык, хоткей,
-   устройство), автозапуск, инсталлятор.
-4. **Качество**: тесты на `Hotkey`/`TextInjector` через инъекцию зависимостей, релизный артефакт
-   в GitHub Releases.
+3. **Продукт**: окно настроек поверх `settings.json` (вместо ручного редактирования), выбор
+   устройства микрофона, инсталлятор.
+4. **Качество**: тесты на `TrayIcon`/`Overlay`/`Hotkey` через инъекцию зависимостей, релизный
+   артефакт в GitHub Releases.

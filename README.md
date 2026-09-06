@@ -20,8 +20,8 @@ Speech recognition runs **100% locally** with [whisper.cpp](https://github.com/g
 | Single-session guard — a second press cannot start a parallel session | ✅ done |
 | Latency: energy VAD trims silence + shrinks whisper's audio context for short clips | ✅ done |
 | Model discovery + config file + model downloader script | ✅ done |
-| Unit tests (44 cases) + CI on Windows and Linux | ✅ done |
-| Tray icon, per-app settings UI, hidden window (no console) | ⏳ next |
+| Unit tests (70 cases) + CI on Windows and Linux | ✅ done |
+| Tray icon, settings.json UI, phrase history, autostart, hidden window (no console) | ✅ done |
 
 See [docs/STATUS.md](./docs/STATUS.md) for the detailed breakdown and the plan.
 
@@ -103,6 +103,38 @@ Console fallback without the hotkey:
 .\build\bin\WhisperFlowClone.exe --interactive
 ```
 
+### Tray mode (background, no console)
+
+```cmd
+:: Keep the tray build running (used by Start with Windows as well)
+.\build\bin\WhisperFlowClone.exe --tray
+```
+
+In tray mode the app has **no console** and uses `settings.json` as the source of
+truth. It shows a tray icon with:
+
+- **Status** (recorded / transcribed / error)
+- **Repeat last insertion** — re-pastes the most recent accepted phrase
+- **Language** — `auto` / `ru` / `en` (other codes stay editable in `settings.json`)
+- **Model** — `tiny` / `base` / `small` / `medium`; switching model reloads it
+  without restarting the application
+- **Open models folder / Open settings file**
+- **Start with Windows** (HKCU `…\CurrentVersion\Run`, command `"<exe>" --tray`)
+- **Exit**
+
+A small always-on-top, non-activating overlay shows `Listening…` / `Transcribing…`
+around the actual dictation, so it never steals focus from the text editor.
+
+Settings precedence:
+
+1. Portable `settings.json` next to the executable (wins when it exists)
+2. `%APPDATA%\WhisperFlowClone\settings.json` (portable layout in other OS builds)
+
+Phrase history lands next to `settings.json` as `phrase_history.json`, is capped
+(`max_history_entries`, default 200), deduplicates consecutive repeats and is local-only.
+
+Example file: [`settings.example.json`](./settings.example.json).
+
 ### Microphone permission
 
 `Settings → Privacy & security → Microphone → Let desktop apps access your microphone → On`.
@@ -137,6 +169,7 @@ Check what is installed with `WhisperFlowClone.exe --list-models`.
 | Option | Meaning |
 | :--- | :--- |
 | *(none)* | run in the background: hold the push-to-talk hotkey, release to paste |
+| `--tray` | Windows tray build: no console, `settings.json`, phrase history, autostart |
 | `--interactive` | console mode: `Enter` starts recording, `Enter` transcribes |
 | `--model <path>` | use this ggml model file |
 | `--model-name <name>` | `tiny` \| `base` \| `small` (default) \| `medium` |
@@ -151,7 +184,8 @@ Check what is installed with `WhisperFlowClone.exe --list-models`.
 | `--list-models` | show the search paths and installed models |
 | `--help` | usage |
 
-Config file `%LOCALAPPDATA%\WhisperFlowClone\config.ini` (all keys optional, command line wins):
+Config file `%LOCALAPPDATA%\WhisperFlowClone\config.ini` (all keys optional, command line wins;
+legacy CLI mode):
 
 ```ini
 model_name = small
@@ -162,6 +196,25 @@ use_gpu    = true
 translate  = false
 vad            = true   ; trim leading/trailing silence before recognition
 shrink_context = true   ; size whisper's audio context to the clip (faster short clips)
+```
+
+Tray mode uses `settings.json` instead. Put `settings.example.json` next to the
+executable (or in `%APPDATA%\WhisperFlowClone`) and edit it; the tray menu updates
+the same values:
+
+```json
+{
+  "model_name": "small",
+  "language": "auto",
+  "hotkey": "ctrl+shift+space",
+  "threads": 0,
+  "use_gpu": true,
+  "translate": false,
+  "vad": true,
+  "shrink_context": true,
+  "start_with_windows": false,
+  "max_history_entries": 200
+}
 ```
 
 ### Latency

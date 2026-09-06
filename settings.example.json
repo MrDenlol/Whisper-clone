@@ -1,0 +1,12 @@
+{
+  "model_name": "small",
+  "language": "auto",
+  "hotkey": "ctrl+shift+space",
+  "threads": 0,
+  "use_gpu": true,
+  "translate": false,
+  "vad": true,
+  "shrink_context": true,
+  "start_with_windows": false,
+  "max_history_entries": 200
+}

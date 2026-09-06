@@ -127,8 +127,11 @@ endfunction()
 # ---------------------------------------------------------------------------
 add_library(whisperflow_core STATIC
     src/AppConfig.cpp
+    src/Autostart.cpp
     src/HotkeySpec.cpp
     src/ModelLocator.cpp
+    src/PhraseHistory.cpp
+    src/Settings.cpp
     src/SpeechGate.cpp
     src/TextInjector.cpp
     src/Transcriber.cpp
@@ -142,6 +145,9 @@ target_include_directories(whisperflow_core
 )
 
 target_link_libraries(whisperflow_core PUBLIC whisper)
+if(WIN32)
+    target_link_libraries(whisperflow_core PUBLIC advapi32)
+endif()
 whisperflow_apply_strict_warnings(whisperflow_core)
 
 # ---------------------------------------------------------------------------
@@ -155,13 +161,28 @@ target_link_libraries(WhisperFlowClone PRIVATE whisperflow_core)
 whisperflow_apply_strict_warnings(WhisperFlowClone)
 
 if(WIN32)
+    # Windows-subsystem executable: the tray build starts without a console window.
+    # The WinMain wrapper in main.cpp delegates to main() after UTF-8 argv conversion.
+    set_target_properties(WhisperFlowClone PROPERTIES WIN32_EXECUTABLE TRUE)
+
+    # Generate the .rc in the build tree with an absolute path to the icon, so the
+    # resource compiler is never at the mercy of its working directory.
+    set(WHISPERFLOW_APP_ICO "${CMAKE_CURRENT_SOURCE_DIR}/assets/app.ico")
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/app.rc.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/app.rc"
+        @ONLY)
+
     # WASAPI microphone capture lives behind this flag so that the rest of the
     # pipeline (model lookup, inference, WAV input) stays buildable elsewhere.
     target_sources(WhisperFlowClone PRIVATE
         src/AudioCapture.cpp
         src/Hotkey.cpp
+        src/Overlay.cpp
+        src/TrayIcon.cpp
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/app.rc"
     )
-    target_link_libraries(WhisperFlowClone PRIVATE ole32 uuid)
+    target_link_libraries(WhisperFlowClone PRIVATE ole32 uuid shell32)
     target_compile_definitions(WhisperFlowClone PRIVATE WHISPERFLOW_HAS_MICROPHONE=1)
 endif()
 

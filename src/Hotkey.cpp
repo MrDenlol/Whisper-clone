@@ -4,6 +4,8 @@
 
 #include <atomic>
 #include <cstdio>
+#include <deque>
+#include <mutex>
 #include <string>
 #include <utility>
 
@@ -13,6 +15,7 @@ namespace {
 constexpr int kHotkeyId = 0xC0FF;
 constexpr UINT_PTR kReleaseTimerId = 1;
 constexpr UINT kReleasePollMs = 20;
+constexpr UINT kPostTaskMessage = WM_APP + 0x101;
 
 const wchar_t* const kWindowClassName = L"WhisperFlowClone.HotkeyWindow";
 
@@ -128,6 +131,39 @@ public:
         onError_ = std::move(handler);
     }
 
+    void setUserMessageHandler(UserMessageHandler handler) {
+        userHandler_ = std::move(handler);
+    }
+
+    void post(TaskHandler task) {
+        {
+            std::lock_guard<std::mutex> lock(taskMutex_);
+            tasks_.push_back(std::move(task));
+        }
+        if (hwnd_ != nullptr) {
+            PostMessageW(hwnd_, kPostTaskMessage, 0, 0);
+        }
+    }
+
+    void postTasks() {
+        std::deque<TaskHandler> tasks;
+        {
+            std::lock_guard<std::mutex> lock(taskMutex_);
+            tasks.swap(tasks_);
+        }
+        while (!tasks.empty()) {
+            TaskHandler task = std::move(tasks.front());
+            tasks.pop_front();
+            if (task) {
+                task();
+            }
+        }
+    }
+
+    HWND nativeHandle() const noexcept {
+        return hwnd_;
+    }
+
     bool registerPushToTalk(const HotkeyCombination& combination, PressHandler onPress,
                             ReleaseHandler onRelease) {
         if (registered_) {
@@ -214,6 +250,13 @@ private:
                 self->pollForRelease();
                 return 0;
             }
+            if (message == kPostTaskMessage) {
+                self->postTasks();
+                return 0;
+            }
+            if (self->userHandler_ && self->userHandler_(message, wParam, lParam)) {
+                return 0;
+            }
         }
 
         return DefWindowProcW(hwnd, message, wParam, lParam);
@@ -241,8 +284,12 @@ private:
             }
         }
 
-        hwnd_ = CreateWindowExW(0, kWindowClassName, L"WhisperFlowClone", 0, 0, 0, 0, 0,
-                                HWND_MESSAGE, nullptr, instance, this);
+        // A normal, invisible top-level window (not HWND_MESSAGE) so the taskbar
+        // tray icon can deliver its callback messages on the same message loop.
+        // WS_EX_NOACTIVATE keeps it out of Alt+Tab and the foreground queue.
+        hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, kWindowClassName,
+                                L"WhisperFlowClone", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr,
+                                instance, this);
         if (hwnd_ == nullptr) {
             lastError_ = "CreateWindowExW failed (error " + std::to_string(GetLastError()) + ")";
             reportError();
@@ -306,7 +353,10 @@ private:
     PressHandler onPress_;
     ReleaseHandler onRelease_;
     ErrorHandler onError_;
+    UserMessageHandler userHandler_;
     std::string lastError_;
+    std::mutex taskMutex_;
+    std::deque<TaskHandler> tasks_;
     std::atomic<DWORD> loopThreadId_{0};
 };
 
@@ -317,6 +367,18 @@ HotkeyManager& HotkeyManager::operator=(HotkeyManager&&) noexcept = default;
 
 void HotkeyManager::setErrorHandler(ErrorHandler handler) {
     pImpl_->setErrorHandler(std::move(handler));
+}
+
+void HotkeyManager::setUserMessageHandler(UserMessageHandler handler) {
+    pImpl_->setUserMessageHandler(std::move(handler));
+}
+
+void HotkeyManager::post(TaskHandler task) {
+    pImpl_->post(std::move(task));
+}
+
+HWND HotkeyManager::nativeHandle() const noexcept {
+    return pImpl_->nativeHandle();
 }
 
 bool HotkeyManager::registerPushToTalk(const HotkeyCombination& combination, PressHandler onPress,

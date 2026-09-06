@@ -130,6 +130,17 @@ public:
         logInstalled_ = true;
     }
 
+    void setLanguage(const std::string& language) {
+        const std::string normalized = toLower(trim(language));
+        if (!normalized.empty() && normalized != "auto" &&
+            whisper_lang_id(normalized.c_str()) < 0) {
+            lastError_ = "Unknown language code '" + language + "'.";
+            return;
+        }
+        lastError_.clear();
+        options_.language = normalized;
+    }
+
     bool ensureLoaded() {
         if (context_ != nullptr) {
             return true;
@@ -278,6 +289,10 @@ Transcriber& Transcriber::operator=(Transcriber&&) noexcept = default;
 
 void Transcriber::setLogHandler(LogHandler handler) {
     pImpl_->setLogHandler(std::move(handler));
+}
+
+void Transcriber::setLanguage(const std::string& language) {
+    pImpl_->setLanguage(language);
 }
 
 bool Transcriber::ensureLoaded() {

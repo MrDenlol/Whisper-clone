@@ -48,3 +48,7 @@ Desktop.ini
 
 # Recordings made with --save-wav (test artifacts, never commit)
 *.wav
+
+# Runtime state generated next to the executable / in %APPDATA% (never commit)
+settings.json
+phrase_history.json

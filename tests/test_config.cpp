@@ -87,6 +87,10 @@ WF_TEST(Config_recognisesHelpAndFileInputs) {
     WF_CHECK(wav.valid);
     WF_CHECK_EQ(wav.wavInput.string(), std::string("clip.wav"));
     WF_CHECK_EQ(wav.saveRecording.string(), std::string("out.wav"));
+
+    const whisperflow::AppConfig tray = parse({"--tray"});
+    WF_CHECK(tray.valid);
+    WF_CHECK(tray.trayMode);
 }
 
 WF_TEST(Config_usageTextDocumentsModelLocation) {

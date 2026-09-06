@@ -26,7 +26,21 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DWHISPERFLOW_BUILD_TESTS=ON
 
       - name: Build Project
-        run: cmake --build build --config Release
+        shell: pwsh
+        run: |
+          $buildLog = cmake --build build --config Release 2>&1 | ForEach-Object { $_ }
+          if ($LASTEXITCODE -ne 0) {
+            $errors = $buildLog | Where-Object {
+              $_.Contains('Whisper-clone\src') -or $_ -match '(^|[^a-z])(error|fatal error)[ :]|LNK[0-9]{4}'
+            }
+            if ($errors) {
+              $errors | Select-Object -First 100 | ForEach-Object { Write-Host "::error::$($_)" }
+            } else {
+              $buildLog | Select-Object -Last 100 | ForEach-Object { Write-Host "::error::$($_)" }
+            }
+            Write-Host "::error::Build failed with exit code $LASTEXITCODE"
+            exit $LASTEXITCODE
+          }
 
       - name: Run unit tests
         run: ctest --test-dir build -C Release --output-on-failure
@@ -42,8 +56,12 @@ jobs:
       - name: Smoke test (no model installed -> exit code 3 with guidance)
         shell: pwsh
         run: |
-          & .\build\bin\WhisperFlowClone.exe --list-models
-          if ($LASTEXITCODE -ne 0) { throw "--list-models exited with $LASTEXITCODE" }
+          # The tray build is a Windows-subsystem executable, so PowerShell would
+          # otherwise return before it exits. Start-Process -Wait keeps the check
+          # deterministic.
+          $exe = (Resolve-Path .\build\bin\WhisperFlowClone.exe)
+          $proc = Start-Process -FilePath $exe -ArgumentList '--list-models' -Wait -NoNewWindow -PassThru
+          if ($proc.ExitCode -ne 0) { throw "--list-models exited with $($proc.ExitCode)" }
 
       - name: Upload executable
         uses: actions/upload-artifact@v4

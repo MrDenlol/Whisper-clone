@@ -35,6 +35,17 @@ public:
     using PressHandler = std::function<void()>;
     using ReleaseHandler = std::function<void()>;
     using ErrorHandler = std::function<void(const std::string& message)>;
+    using TaskHandler = std::function<void()>;
+    // Return true when the message was handled. Used by the tray icon so its
+    // callback messages are delivered on the same UI message loop.
+    using UserMessageHandler = std::function<bool(UINT message, WPARAM wParam, LPARAM lParam)>;
+
+    void setUserMessageHandler(UserMessageHandler handler);
+
+    // Runs task on the message loop thread. Safe to call from the worker thread.
+    void post(TaskHandler task);
+
+    [[nodiscard]] HWND nativeHandle() const noexcept;
 
     HotkeyManager();
     ~HotkeyManager();
