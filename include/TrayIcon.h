@@ -25,6 +25,8 @@ enum class TrayCommand {
     ModelMedium,
     OpenModelsFolder,
     OpenSettingsFile,
+    EditDictionary,
+    ReloadDictionary,
     ToggleAutostart,
     Exit,
 };

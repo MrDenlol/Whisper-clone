@@ -27,8 +27,10 @@ constexpr UINT_PTR kCommandIdModelSmall = 1008;
 constexpr UINT_PTR kCommandIdModelMedium = 1009;
 constexpr UINT_PTR kCommandIdOpenModels = 1010;
 constexpr UINT_PTR kCommandIdOpenSettings = 1011;
-constexpr UINT_PTR kCommandIdAutostart = 1012;
-constexpr UINT_PTR kCommandIdExit = 1013;
+constexpr UINT_PTR kCommandIdEditDictionary = 1012;
+constexpr UINT_PTR kCommandIdReloadDictionary = 1013;
+constexpr UINT_PTR kCommandIdAutostart = 1014;
+constexpr UINT_PTR kCommandIdExit = 1015;
 
 std::wstring toWide(const std::string& text) {
     if (text.empty()) {
@@ -99,6 +101,8 @@ std::optional<TrayCommand> commandForId(UINT id) {
         case kCommandIdModelMedium: return TrayCommand::ModelMedium;
         case kCommandIdOpenModels: return TrayCommand::OpenModelsFolder;
         case kCommandIdOpenSettings: return TrayCommand::OpenSettingsFile;
+        case kCommandIdEditDictionary: return TrayCommand::EditDictionary;
+        case kCommandIdReloadDictionary: return TrayCommand::ReloadDictionary;
         case kCommandIdAutostart: return TrayCommand::ToggleAutostart;
         case kCommandIdExit: return TrayCommand::Exit;
         default: break;
@@ -282,6 +286,8 @@ private:
         appendItem(menu_, 0, "", false, true, true);
         appendItem(menu_, kCommandIdOpenModels, "Open models folder");
         appendItem(menu_, kCommandIdOpenSettings, "Open settings file");
+        appendItem(menu_, kCommandIdEditDictionary, "Edit punctuation dictionary");
+        appendItem(menu_, kCommandIdReloadDictionary, "Reload dictionary");
         appendItem(menu_, kCommandIdAutostart, "Start with Windows", autostartEnabled_);
         appendItem(menu_, 0, "", false, true, true);
         appendItem(menu_, kCommandIdExit, "Exit");

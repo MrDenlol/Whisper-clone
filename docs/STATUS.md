@@ -19,7 +19,8 @@
 
 `WhisperFlowClone --tray` поднимает общий `Win32` message loop, в котором живут:
 - **трей** (`src/TrayIcon.cpp`): статус, Repeat last insertion, Language `auto/ru/en`, Model
-  `tiny/base/small/medium`, Open models folder, Open settings file, Start with Windows (check),
+  `tiny/base/small/medium`, Open models folder, Open settings file, Edit punctuation dictionary,
+  Reload dictionary, Start with Windows (check),
   Exit. `Shell_NotifyIconW` без внешних зависимостей.
 - **оверлей** (`src/Overlay.cpp`): пилюля `Listening…` / `Transcribing…` с
   `WS_EX_NOACTIVATE` — не крадёт фокус у целевого окна.
@@ -78,7 +79,7 @@
 ```
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DWHISPERFLOW_BUILD_TESTS=ON
 cmake --build build          # whisper.cpp v1.9.3 + ggml + whisperflow_core + WhisperFlowTests, -Wall -Wextra -Wpedantic -Werror
-ctest --test-dir build       # 81/81 test cases passed
+ctest --test-dir build       # 89/89 test cases passed
 cmake --install build --prefix dist --component whisperflow
                              # dist/: бинарник, settings.example.json, dictionary.json, LICENSE*, NOTICE,
                              # README.md, models/README.txt, scripts/download_model.ps1 - и ничего лишнего

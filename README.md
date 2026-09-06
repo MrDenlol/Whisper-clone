@@ -72,6 +72,8 @@ Model: medium                            the pill shows "Loading medium..." mean
 ──────────────────────────────
 Open models folder                       opens %LOCALAPPDATA%\WhisperFlowClone\models in Explorer
 Open settings file                       opens settings.json in the default editor (creates it if missing)
+Edit punctuation dictionary              opens dictionary.json in the default editor (creates it if missing)
+Reload dictionary                        re-reads dictionary.json without restarting; a broken file is ignored
 Start with Windows              ☐        HKCU\...\CurrentVersion\Run  ->  "<exe>" --tray
 ──────────────────────────────
 Exit
@@ -237,6 +239,8 @@ truth. It shows a tray icon with:
 - **Model** — `tiny` / `base` / `small` / `medium`; switching model reloads it
   without restarting the application
 - **Open models folder / Open settings file**
+- **Edit punctuation dictionary / Reload dictionary** — edit `dictionary.json` and apply it
+  live; if the edited file does not parse, the dictionary already in use is kept
 - **Start with Windows** (HKCU `…\CurrentVersion\Run`, command `"<exe>" --tray`)
 - **Exit**
 
@@ -325,8 +329,17 @@ An empty value keeps the built-in per-language default.
 **2. Text normalization before insertion** ([`src/TextNormalizer.cpp`](./src/TextNormalizer.cpp)).
 The transcript is cleaned up before it is printed/pasted/stored in the phrase history:
 
+- non-speech annotations are dropped: `(кашель) Привет (аплодисменты)` → `Привет`. Only
+  bracketed groups made of letters and spaces are removed, so `(см. пункт 3)` and `sum(a, b)`
+  survive;
+- hallucinated boilerplate lines Russian models invent on silence — `Субтитры сделал
+  DimaTorzok`, `Продолжение следует...`, `Спасибо за просмотр!` — are dropped when they are a
+  whole standalone sentence (real speech such as «включи субтитры на видео» is never touched);
 - whitespace is trimmed and runs of spaces are collapsed;
-- a stray space before `,.;:!?) ] }` is removed (`Привет , как дела ?` → `Привет, как дела?`);
+- a stray space before `,.;:!?)]}»` is removed, as is the space after `([{«`
+  (`Привет , как дела ?` → `Привет, как дела?`; `« привет »` → `«привет»`);
+- sentences are capitalized: `привет. как дела?` → `Привет. Как дела?`. A terminator only ends a
+  sentence when whitespace follows it, which is what keeps `example.com` and `script.py` lowercase;
 - nothing is inserted and no characters are reordered, so `python3 script.py`,
   `https://example.com/docs?lang=ru` and `localhost:3000` pass through untouched.
 
@@ -341,9 +354,19 @@ The file is plain JSON and safe to edit:
 }
 ```
 
+Besides `запятая`/`точка` the shipped file covers `открывающая скобка`, `закрывающая скобка`,
+`открывающая кавычка` → `«`, `закрывающая кавычка` → `»`, `знак процента`, `знак равно`,
+`знак плюс` and `косая черта`. Multi-word keys are deliberate: a bare «плюс» or «процент» is an
+ordinary Russian word and must not be swallowed.
+
 Lookup order: `dictionary.json` next to the executable first, then next to `settings.json`
 (`%APPDATA%\WhisperFlowClone\dictionary.json`), then the built-in defaults. A missing or
 corrupt file never breaks dictation — the defaults take over.
+
+In tray mode the dictionary is editable without touching the file system by hand:
+**Edit punctuation dictionary** creates `dictionary.json` from the dictionary currently in use
+and opens it in your editor, and **Reload dictionary** re-reads it while the app keeps running.
+A file that fails to parse leaves the previous dictionary active.
 
 The normalization runs in every mode: `--wav`, `--interactive`, the background hotkey and
 `--tray`. Manual quality checklists for Russian live in

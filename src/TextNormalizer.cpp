@@ -5,6 +5,8 @@
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
+#include <vector>
 
 namespace whisperflow {
 namespace {
@@ -73,6 +75,111 @@ bool isClosingPunctuation(char c) {
         default:
             return false;
     }
+}
+
+// Uppercases the single ASCII/Cyrillic letter starting at `i` in place. Every
+// mapping is byte-length preserving, so indices stay valid. Returns true when a
+// letter was actually cased.
+bool upperInPlaceAt(std::string& out, std::size_t i) {
+    if (i >= out.size()) {
+        return false;
+    }
+    char& c = out[i];
+    if (c >= 'a' && c <= 'z') {
+        c = static_cast<char>(c - 'a' + 'A');
+        return true;
+    }
+    if (c >= 'A' && c <= 'Z') {
+        return true;  // already uppercase
+    }
+    const auto lead = static_cast<unsigned char>(c);
+    if (i + 1 >= out.size()) {
+        return false;
+    }
+    const auto second = static_cast<unsigned char>(out[i + 1]);
+    if (lead == 0xD0 && second >= 0xB0 && second <= 0xBF) {  // а..п -> А..П
+        out[i + 1] = static_cast<char>(second - 0x20);
+        return true;
+    }
+    if (lead == 0xD1 && second >= 0x80 && second <= 0x8F) {  // р..я -> Р..Я
+        out[i] = static_cast<char>(0xD0);
+        out[i + 1] = static_cast<char>(second + 0x20);
+        return true;
+    }
+    if (lead == 0xD1 && second == 0x91) {  // ё -> Ё
+        out[i] = static_cast<char>(0xD0);
+        out[i + 1] = static_cast<char>(0x81);
+        return true;
+    }
+    if (lead == 0xD0 && (second == 0x81 || (second >= 0x90 && second <= 0xAF))) {
+        return true;  // already an uppercase Cyrillic letter
+    }
+    return false;
+}
+
+// Width in bytes of the sentence terminator at `i`, or 0 if there is none.
+// "…" is U+2026 = E2 80 A6; everything else is single-byte ASCII.
+std::size_t sentenceEndWidth(const std::string& text, std::size_t i) {
+    const char c = text[i];
+    if (c == '.' || c == '!' || c == '?') {
+        return 1;
+    }
+    if (static_cast<unsigned char>(c) == 0xE2 && i + 2 < text.size() &&
+        static_cast<unsigned char>(text[i + 1]) == 0x80 &&
+        static_cast<unsigned char>(text[i + 2]) == 0xA6) {
+        return 3;
+    }
+    return 0;
+}
+
+// A terminator only ends a sentence when whitespace (or the end of the text)
+// follows it. That single rule is what keeps "example.com", "script.py" and
+// "localhost:3000/a.b" out of the capitalizer's way.
+bool isSentenceEnd(const std::string& text, std::size_t i) {
+    const std::size_t width = sentenceEndWidth(text, i);
+    if (width == 0) {
+        return false;
+    }
+    std::size_t after = i + width;
+    // Runs like "?!" or "..." count as one terminator.
+    while (after < text.size() && sentenceEndWidth(text, after) != 0) {
+        after += sentenceEndWidth(text, after);
+    }
+    if (after >= text.size()) {
+        return true;
+    }
+    const char next = text[after];
+    return next == ' ' || next == '\t' || next == '\r' || next == '\n';
+}
+
+char closingBracketFor(char opening) {
+    switch (opening) {
+        case '(': return ')';
+        case '[': return ']';
+        case '{': return '}';
+        case '*': return '*';
+        default: return '\0';
+    }
+}
+
+// Russian boilerplate whisper models hallucinate on silence, noise or music.
+// Matched case-insensitively as a prefix of a standalone sentence.
+const std::vector<std::string>& hallucinationPrefixes() {
+    static const std::vector<std::string> kPrefixes = {
+        "субтитры сделал",
+        "субтитры создавал",
+        "субтитры делал",
+        "редактор субтитров",
+        "корректор субтитров",
+        "продолжение следует",
+        "спасибо за просмотр",
+        "подписывайтесь на канал",
+        "ставьте лайки",
+        "субтитры и перевод",
+        "перевод и субтитры",
+        "dimatorzok",
+    };
+    return kPrefixes;
 }
 
 // Minimal reader for a flat JSON string->string object. Supports the standard
@@ -151,6 +258,14 @@ PunctuationDictionary defaultPunctuationDictionary() {
         {"точка с запятой", ";"},
         {"вопросительный знак", "?"},
         {"восклицательный знак", "!"},
+        {"открывающая скобка", "("},
+        {"закрывающая скобка", ")"},
+        {"открывающая кавычка", "«"},
+        {"закрывающая кавычка", "»"},
+        {"знак процента", "%"},
+        {"знак равно", "="},
+        {"знак плюс", "+"},
+        {"косая черта", "/"},
         {"запятая", ","},
         {"двоеточие", ":"},
         {"многоточие", "…"},
@@ -314,6 +429,168 @@ std::string applyPunctuationDictionary(const std::string& text,
     return out;
 }
 
+std::string stripNonSpeechAnnotations(const std::string& text) {
+    std::string out;
+    out.reserve(text.size());
+
+    std::size_t i = 0;
+    while (i < text.size()) {
+        const char opening = text[i];
+        const char closing = closingBracketFor(opening);
+        if (closing == '\0') {
+            out.push_back(text[i++]);
+            continue;
+        }
+
+        const std::size_t end = text.find(closing, i + 1);
+        if (end == std::string::npos) {
+            out.push_back(text[i++]);
+            continue;
+        }
+
+        // Only drop short groups made of letters and spaces: anything with
+        // digits, punctuation or code-like characters is real content.
+        const std::string inner = text.substr(i + 1, end - i - 1);
+        const bool empty = inner.empty();
+        bool annotation = !empty && inner.size() <= 64;
+        for (const char c : inner) {
+            const auto byte = static_cast<unsigned char>(c);
+            const bool letterish = byte >= 0x80 || (c >= 'a' && c <= 'z') ||
+                                   (c >= 'A' && c <= 'Z') || c == ' ' || c == '-';
+            if (!letterish) {
+                annotation = false;
+                break;
+            }
+        }
+        if (!annotation) {
+            out.push_back(text[i++]);
+            continue;
+        }
+
+        // Swallow the group; a space is left behind so words do not glue
+        // together. normalizeSpacing() collapses the leftovers afterwards.
+        out.push_back(' ');
+        i = end + 1;
+    }
+    return out;
+}
+
+std::string dropHallucinatedBoilerplate(const std::string& text) {
+    // Split into sentences, keeping their terminators, then drop the ones that
+    // are pure boilerplate. A sentence is only dropped when the whole sentence
+    // starts with a known phrase, never in the middle of real speech.
+    std::vector<std::string> sentences;
+    std::size_t start = 0;
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        if (!isSentenceEnd(text, i)) {
+            continue;
+        }
+        std::size_t end = i + (static_cast<unsigned char>(text[i]) == 0xE2 ? 3 : 1);
+        while (end < text.size() && isSentenceEnd(text, end)) {
+            end += (static_cast<unsigned char>(text[end]) == 0xE2 ? 3 : 1);
+        }
+        sentences.push_back(text.substr(start, end - start));
+        start = end;
+        i = end - 1;
+    }
+    if (start < text.size()) {
+        sentences.push_back(text.substr(start));
+    }
+
+    std::string out;
+    out.reserve(text.size());
+    for (const std::string& sentence : sentences) {
+        const std::string lower = toLowerAsciiCyrillic(normalizeSpacing(sentence));
+        bool boilerplate = false;
+        for (const std::string& prefix : hallucinationPrefixes()) {
+            if (lower.rfind(prefix, 0) == 0) {
+                boilerplate = true;
+                break;
+            }
+        }
+        if (!boilerplate) {
+            out.append(sentence);
+        }
+    }
+    return out;
+}
+
+std::string capitalizeSentences(const std::string& text) {
+    std::string out = text;
+    bool atSentenceStart = true;
+    for (std::size_t i = 0; i < out.size(); ++i) {
+        const char c = out[i];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '"' || c == '(' || c == '[') {
+            continue;  // leading whitespace/quotes do not end the sentence start
+        }
+        if (isSentenceEnd(out, i)) {
+            atSentenceStart = true;
+            i += (static_cast<unsigned char>(c) == 0xE2) ? 2 : 0;
+            continue;
+        }
+        if (atSentenceStart) {
+            if (upperInPlaceAt(out, i)) {
+                atSentenceStart = false;
+            }
+        } else {
+            atSentenceStart = false;
+        }
+        // Skip the continuation byte of a two-byte Cyrillic letter.
+        if (static_cast<unsigned char>(out[i]) >= 0xC0 && i + 1 < out.size()) {
+            ++i;
+        }
+    }
+    return out;
+}
+
+bool writePunctuationDictionary(const std::filesystem::path& path,
+                                const PunctuationDictionary& dictionary, std::string& error) {
+    std::error_code ec;
+    const std::filesystem::path parent = path.parent_path();
+    if (!parent.empty()) {
+        std::filesystem::create_directories(parent, ec);
+        if (ec) {
+            error = "Could not create the dictionary directory: " + ec.message();
+            return false;
+        }
+    }
+
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file.is_open()) {
+        error = "Could not open the dictionary file for writing: " + path.string();
+        return false;
+    }
+
+    auto quote = [](const std::string& value) {
+        std::string out = "\"";
+        for (const char c : value) {
+            switch (c) {
+                case '"': out += "\\\""; break;
+                case '\\': out += "\\\\"; break;
+                case '\n': out += "\\n"; break;
+                case '\r': out += "\\r"; break;
+                case '\t': out += "\\t"; break;
+                default: out.push_back(c); break;
+            }
+        }
+        out.push_back('"');
+        return out;
+    };
+
+    file << "{\n";
+    for (std::size_t i = 0; i < dictionary.size(); ++i) {
+        file << "  " << quote(dictionary[i].first) << ": " << quote(dictionary[i].second)
+             << (i + 1 < dictionary.size() ? ",\n" : "\n");
+    }
+    file << "}\n";
+
+    if (!file.good()) {
+        error = "Could not write the dictionary file: " + path.string();
+        return false;
+    }
+    return true;
+}
+
 std::string normalizeSpacing(const std::string& text) {
     // 1. Trim both ends.
     const char* const kSpaces = " \t\r\n";
@@ -340,22 +617,44 @@ std::string normalizeSpacing(const std::string& text) {
         collapsed.push_back(c);
     }
 
-    // 3. Drop a space before closing punctuation. Only the space is removed:
-    //    nothing is inserted, nothing is reordered.
+    // 3. Drop a space before closing punctuation and after an opening bracket
+    //    or opening quote. Only spaces are removed: nothing is inserted and
+    //    nothing is reordered, so URLs and code stay byte-identical.
     std::string out;
     out.reserve(collapsed.size());
-    for (const char c : collapsed) {
-        if (isClosingPunctuation(c) && !out.empty() && out.back() == ' ') {
+    bool dropNextSpace = false;
+    for (std::size_t i = 0; i < collapsed.size(); ++i) {
+        const char c = collapsed[i];
+        if (c == ' ' && dropNextSpace) {
+            dropNextSpace = false;
+            continue;
+        }
+        dropNextSpace = false;
+        // "»" = C2 BB: the space belongs before the two-byte sequence, so the
+        // check fires on the lead byte C2 while looking ahead at the next one.
+        const bool closingGuillemet = static_cast<unsigned char>(c) == 0xC2 &&
+                                      i + 1 < collapsed.size() &&
+                                      static_cast<unsigned char>(collapsed[i + 1]) == 0xBB;
+        if ((isClosingPunctuation(c) || closingGuillemet) && !out.empty() && out.back() == ' ') {
             out.pop_back();
         }
         out.push_back(c);
+        if (c == '(' || c == '[' || c == '{') {
+            dropNextSpace = true;
+        } else if (static_cast<unsigned char>(c) == 0xAB &&  // "«" = C2 AB
+                   !out.empty() && out.size() >= 2 &&
+                   static_cast<unsigned char>(out[out.size() - 2]) == 0xC2) {
+            dropNextSpace = true;
+        }
     }
     return out;
 }
 
 std::string normalizeTranscript(const std::string& text,
                                 const PunctuationDictionary& dictionary) {
-    return normalizeSpacing(applyPunctuationDictionary(text, dictionary));
+    const std::string cleaned =
+        dropHallucinatedBoilerplate(stripNonSpeechAnnotations(text));
+    return capitalizeSentences(normalizeSpacing(applyPunctuationDictionary(cleaned, dictionary)));
 }
 
 }  // namespace whisperflow
