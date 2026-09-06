@@ -9,6 +9,7 @@ This project strictly adheres to permissive open-source licenses compatible with
 | **WhisperFlowClone** (main codebase) | MIT | [Repository root](./LICENSE) | Everything in `src/`, `include/`, `tests/`, `scripts/` | Project core implementation |
 | **whisper.cpp** v1.9.3 | MIT | [ggml-org/whisper.cpp](https://github.com/ggml-org/whisper.cpp) | Fetched by CMake at configure time (pinned tag + SHA256), linked statically | `LICENSE`: "MIT License / Copyright (c) 2023-2026 The ggml authors" |
 | **ggml** (vendored inside whisper.cpp) | MIT | [ggml-org/ggml](https://github.com/ggml-org/ggml) | Built as part of whisper.cpp (`ggml`, `ggml-base`, `ggml-cpu` targets), linked statically | Covered by the same MIT `LICENSE` as whisper.cpp; upstream ggml is MIT as well |
+| **WhisperFlowClone assets** (`assets/app.ico`, `assets/app.svg`, `assets/app.rc`) | MIT | This repository (`assets/`) | Own icon resource embedded via `assets/app.rc` (id 101) | Original project artwork, released under the project MIT `LICENSE`; no third-party icon is bundled |
 
 ### Optional components (OFF by default, never part of a default build)
 

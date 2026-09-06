@@ -42,8 +42,12 @@ jobs:
       - name: Smoke test (no model installed -> exit code 3 with guidance)
         shell: pwsh
         run: |
-          & .\build\bin\WhisperFlowClone.exe --list-models
-          if ($LASTEXITCODE -ne 0) { throw "--list-models exited with $LASTEXITCODE" }
+          # The tray build is a Windows-subsystem executable, so PowerShell would
+          # otherwise return before it exits. Start-Process -Wait keeps the check
+          # deterministic.
+          $exe = (Resolve-Path .\build\bin\WhisperFlowClone.exe)
+          $proc = Start-Process -FilePath $exe -ArgumentList '--list-models' -Wait -NoNewWindow -PassThru
+          if ($proc.ExitCode -ne 0) { throw "--list-models exited with $($proc.ExitCode)" }
 
       - name: Upload executable
         uses: actions/upload-artifact@v4

@@ -185,6 +185,8 @@ AppConfig loadConfig(int argc, char** argv) {
             config.listModels = true;
         } else if (arg == "--interactive") {
             config.interactive = true;
+        } else if (arg == "--tray") {
+            config.trayMode = true;
         } else if (arg == "--cpu") {
             config.useGpu = false;
         } else if (arg == "--translate") {
@@ -271,6 +273,7 @@ std::string usageText() {
     out << "Usage: WhisperFlowClone [options]\n\n";
     out << "  (no options)        run in the background: hold the push-to-talk hotkey, speak,\n";
     out << "                      release - the text is pasted into the focused window\n";
+    out << "  --tray              Windows tray build: no console, settings.json, menu, autostart\n";
     out << "  --interactive       console mode: Enter starts recording, Enter transcribes\n";
     out << "  --model <path>      use this ggml model file\n";
     out << "  --model-name <name> tiny | base | small (default) | medium\n";

@@ -77,6 +77,10 @@ public:
     // Routes whisper.cpp's own log output (model loading, timings) to a handler.
     void setLogHandler(LogHandler handler);
 
+    // Changes the language for the next transcribe() call. The loaded model is
+    // kept warm; only the per-utterance whisper language is updated.
+    void setLanguage(const std::string& language);
+
     // Loads the model into memory. Call once at startup so that the first
     // dictation does not pay the load cost. Safe to call more than once.
     bool ensureLoaded();
